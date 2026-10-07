@@ -1,0 +1,156 @@
+# Proj_1: UAV Mapping and Localization System
+# Installs every dependency on a fresh Ubuntu 22.04 (jammy) machine.
+#
+#   make help     list targets
+#   make deps     install everything (asks for sudo)
+#   make check    report what is installed / missing (no sudo, changes nothing)
+
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+# ---- Settings (override on the command line, e.g. make px4 PX4_DIR=~/src/PX4) ----
+PX4_DIR  ?= $(HOME)/PX4-Autopilot
+PX4_REPO ?= https://github.com/PX4/PX4-Autopilot.git
+# PX4 commit the team has validated (v1.18.0-beta1-603). Change only on purpose.
+PX4_REF  ?= 2c47a16f563b86d895b394a0f3dd8848b0ccdd78
+QGC_URL  ?= https://d176tv9ibo4jno.cloudfront.net/latest/QGroundControl-x86_64.AppImage
+QGC_APP  ?= $(HOME)/QGroundControl-x86_64.AppImage
+
+ROS_SETUP := /opt/ros/humble/setup.bash
+GZ_KEYRING := /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+GZ_LIST    := /etc/apt/sources.list.d/gazebo-stable.list
+
+# Base tools
+BASE_PKGS := git curl wget lsb-release gnupg software-properties-common build-essential
+
+# ROS 2 Humble + build/test tools
+ROS_PKGS := \
+	ros-humble-desktop \
+	python3-colcon-common-extensions \
+	python3-rosdep \
+	python3-pytest \
+	ros-humble-ament-cmake-pytest \
+	ros-humble-tf2-tools
+
+# Gazebo Harmonic + its ROS 2 bridge.
+# ros-humble-ros-gzharmonic comes from the Gazebo (OSRF) repo. Do NOT use the default
+# ros-humble-ros-gz-bridge: it is built for Gazebo Fortress and no data flows.
+GZ_PKGS := gz-harmonic ros-humble-ros-gzharmonic
+
+# SLAM + mapping + PX4 link
+SLAM_PKGS := ros-humble-rtabmap-ros ros-humble-octomap-server ros-humble-mavros
+
+# QGroundControl runtime libraries (from the QGC install guide)
+QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
+	libfuse2 libxcb-xinerama0 libxkbcommon-x11-0 libxcb-cursor-dev
+
+ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
+
+.PHONY: help deps base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
+	check sim bridge
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+deps: base ros gazebo slam mavros-geo px4 models qgc ## Install everything (sudo)
+	@echo
+	@echo "All dependencies installed. Run 'make check' to verify."
+	@echo "Add 'source $(ROS_SETUP)' to your ~/.bashrc if it is not there yet."
+
+base: ## Base tools (git, curl, compilers)
+	sudo apt-get update
+	sudo apt-get install -y $(BASE_PKGS)
+
+ros-repo: base ## Add the ROS 2 apt repository
+	@if dpkg -s ros2-apt-source >/dev/null 2>&1; then \
+		echo "ROS 2 apt source already installed"; \
+	else \
+		sudo add-apt-repository -y universe; \
+		ver=$$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
+			| grep -F tag_name | awk -F'"' '{print $$4}'); \
+		curl -L -o /tmp/ros2-apt-source.deb \
+			"https://github.com/ros-infrastructure/ros-apt-source/releases/download/$${ver}/ros2-apt-source_$${ver}.$$(lsb_release -cs)_all.deb"; \
+		sudo dpkg -i /tmp/ros2-apt-source.deb; \
+	fi
+
+gz-repo: base ## Add the Gazebo (OSRF) apt repository
+	@if [ -f $(GZ_LIST) ]; then \
+		echo "Gazebo apt source already installed"; \
+	else \
+		sudo curl -fsSL https://packages.osrfoundation.org/gazebo.gpg -o $(GZ_KEYRING); \
+		echo "deb [arch=$$(dpkg --print-architecture) signed-by=$(GZ_KEYRING)] http://packages.osrfoundation.org/gazebo/ubuntu-stable $$(lsb_release -cs) main" \
+			| sudo tee $(GZ_LIST) >/dev/null; \
+	fi
+
+ros: ros-repo ## ROS 2 Humble desktop + colcon, rosdep, pytest
+	sudo apt-get update
+	sudo apt-get install -y $(ROS_PKGS)
+	@[ -f /etc/ros/rosdep/sources.list.d/20-default.list ] || sudo rosdep init
+	rosdep update
+
+gazebo: ros-repo gz-repo ## Gazebo Harmonic + ros_gz bridge for Harmonic
+	sudo apt-get update
+	sudo apt-get install -y $(GZ_PKGS)
+
+slam: ros-repo ## RTAB-Map, OctoMap server, MAVROS
+	sudo apt-get update
+	sudo apt-get install -y $(SLAM_PKGS)
+
+mavros-geo: slam ## GeographicLib datasets MAVROS needs at runtime
+	@if [ -d /usr/share/GeographicLib/geoids ]; then \
+		echo "GeographicLib datasets already installed"; \
+	else \
+		sudo /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh; \
+	fi
+
+px4: base ## Clone PX4 at PX4_REF, run its setup script, build SITL
+	@if [ ! -d $(PX4_DIR)/.git ]; then \
+		git clone $(PX4_REPO) $(PX4_DIR) && \
+		git -C $(PX4_DIR) checkout $(PX4_REF) && \
+		git -C $(PX4_DIR) submodule update --init --recursive; \
+	else \
+		echo "PX4 already at $(PX4_DIR) ($$(git -C $(PX4_DIR) describe --tags --always))"; \
+	fi
+	bash $(PX4_DIR)/Tools/setup/ubuntu.sh --no-nuttx
+	$(MAKE) -C $(PX4_DIR) px4_sitl
+
+models: ## Copy our custom Gazebo models (sim/models) into PX4
+	./sim/install_models.sh $(PX4_DIR)
+
+qgc: ## QGroundControl AppImage + its libraries
+	sudo apt-get install -y $(QGC_PKGS)
+	@if [ -f $(QGC_APP) ]; then \
+		echo "QGroundControl already at $(QGC_APP)"; \
+	else \
+		wget -O $(QGC_APP) $(QGC_URL); \
+	fi
+	chmod +x $(QGC_APP)
+
+check: ## Report what is installed and what is missing (no sudo)
+	@missing=0; \
+	for p in $(ALL_PKGS); do \
+		if dpkg -s $$p >/dev/null 2>&1; then printf "  ok       %s\n" $$p; \
+		else printf "  MISSING  %s\n" $$p; missing=1; fi; \
+	done; \
+	if dpkg -s ros-humble-ros-gz-bridge >/dev/null 2>&1; then \
+		echo "  WARNING  ros-humble-ros-gz-bridge (Fortress) is installed; use ros-humble-ros-gzharmonic"; fi; \
+	if [ -d /usr/share/GeographicLib/geoids ]; then echo "  ok       GeographicLib datasets"; \
+	else echo "  MISSING  GeographicLib datasets (make mavros-geo)"; missing=1; fi; \
+	if [ -x $(PX4_DIR)/build/px4_sitl_default/bin/px4 ]; then \
+		echo "  ok       PX4 SITL build ($$(git -C $(PX4_DIR) describe --tags --always))"; \
+	else echo "  MISSING  PX4 SITL build in $(PX4_DIR) (make px4)"; missing=1; fi; \
+	if cmp -s sim/models/x500_depth/model.sdf $(PX4_DIR)/Tools/simulation/gz/models/x500_depth/model.sdf; then \
+		echo "  ok       custom models installed in PX4"; \
+	else echo "  MISSING  custom models in PX4 (make models)"; missing=1; fi; \
+	if [ -x $(QGC_APP) ]; then echo "  ok       QGroundControl"; \
+	else echo "  MISSING  QGroundControl (make qgc)"; missing=1; fi; \
+	echo; \
+	if [ $$missing = 0 ]; then echo "Everything is installed."; \
+	else echo "Some dependencies are missing. Run 'make deps' or the target shown."; exit 1; fi
+
+sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1)
+	./sim/launch_sim.sh $(PX4_DIR)
+
+bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
+	./sim/bridge.sh
