@@ -19,6 +19,8 @@ QGC_URL  ?= https://github.com/mavlink/qgroundcontrol/releases/download/v5.0.8/Q
 QGC_APP  ?= $(HOME)/QGroundControl-v5.0.8-x86_64.AppImage
 # ZED camera model on the drone, for `make jetson` (zed, zedm, zed2, zed2i, zedx, zedxm, ...)
 ZED_MODEL ?=
+# `make zed-usb`: true if the ZED is upside down
+FLIP ?= false
 
 ROS_SETUP := /opt/ros/humble/setup.bash
 GZ_KEYRING := /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
@@ -51,7 +53,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
-	check sim bridge rtabmap jetson-deps jetson-check jetson
+	check sim bridge rtabmap zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -166,6 +168,9 @@ bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 
 rtabmap: ## Run RTAB-Map RGB-D SLAM on the bridged topics (terminal 3)
 	./sim/rtabmap.sh
+
+zed-usb: ## Run RTAB-Map on a ZED plugged into this laptop (no NVIDIA GPU), e.g. make zed-usb FLIP=true
+	./zed_usb/run.sh flip:=$(FLIP)
 
 # ---- On the drone's Jetson (JetPack 6) ----
 jetson-deps: ## (Jetson) ROS 2, RTAB-Map, MAVROS, ZED SDK + build the ZED ROS 2 wrapper (sudo)

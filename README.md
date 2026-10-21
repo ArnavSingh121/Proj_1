@@ -10,6 +10,7 @@ into ROS 2. On the real drone, a Jetson runs the same mapping with a Stereolabs 
 |---|---|
 | [`sim/`](sim) | Simulation: custom drone models, launch, bridge and RTAB-Map scripts |
 | [`jetson/`](jetson) | Real drone: install script and launch files for the Jetson + ZED |
+| [`zed_usb/`](zed_usb) | The real ZED on a laptop without an NVIDIA GPU (CPU depth, same topics as on the drone) |
 | [`Makefile`](Makefile) | One-command install and run targets for both (`make help`) |
 
 ## Environment
@@ -131,6 +132,26 @@ ros2 topic hz /uav/points
 ros2 topic echo /uav/odom --once
 ros2 topic hz /rtabmap/odom
 ```
+
+## Using the real ZED on a laptop (no NVIDIA GPU)
+
+The ZED SDK needs an NVIDIA GPU, but the camera itself is a plain USB (UVC) stereo camera.
+[`zed_usb/`](zed_usb) reads it directly, rectifies it with the camera's factory calibration
+(downloaded once from Stereolabs by serial number into `~/.local/share/zed/settings/`), computes
+depth on the CPU (OpenCV SGBM), and publishes the **same topics as the ZED ROS 2 wrapper**, so
+RTAB-Map runs in the same RGB-D setup as on the drone.
+
+```bash
+make zed-usb              # camera upright
+make zed-usb FLIP=true    # camera upside down (images turned, left/right swapped)
+```
+
+- Depth is classic stereo matching, not the SDK's neural depth: expect holes on plain walls/ceilings.
+- VGA (672x376) at 15 fps: what the CPU depth keeps up with. No IMU (that needs the SDK).
+- If the camera keeps disconnecting every few seconds while idle, USB autosuspend is the cause
+  (it is stable while streaming). Disable it for Stereolabs devices once:
+  `echo 'ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2b03", ATTR{power/control}="on"' | sudo tee /etc/udev/rules.d/99-zed-no-autosuspend.rules && sudo udevadm control --reload`
+- Only VGA over a USB 2 link: for USB 3, use a USB 3 port and try flipping the USB-C plug.
 
 ## Running on the drone (Jetson + ZED)
 

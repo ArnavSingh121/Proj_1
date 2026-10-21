@@ -76,6 +76,8 @@ def generate_launch_description():
             'wait_imu_to_init': 'true',
             'frame_id': 'zed_camera_link',
             'approx_sync': 'false',  # RGB and depth come from the same ZED grab
+            # Reliable: best-effort drops ~1 MB images whole once they exceed the socket buffer (212 KB).
+            'qos': '1',
             'visual_odometry': PythonExpression(
                 ["'false' if '", use_zed_odometry, "' == 'true' else 'true'"]),
             'odom_topic': PythonExpression(
