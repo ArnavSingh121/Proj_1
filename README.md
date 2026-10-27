@@ -11,6 +11,8 @@ into ROS 2. On the real drone, a Jetson runs the same mapping with a Stereolabs 
 | [`sim/`](sim) | Simulation: custom drone models, launch, bridge and RTAB-Map scripts |
 | [`jetson/`](jetson) | Real drone: install script and launch files for the Jetson + ZED |
 | [`zed_usb/`](zed_usb) | The real ZED on a laptop without an NVIDIA GPU (CPU depth, same topics as on the drone) |
+| [`tools/`](tools) | Save, reload and monitor the occupancy map (works with all three setups) |
+| [`tests/`](tests) | Automated tests (`make test`), no simulator or camera needed |
 | [`Makefile`](Makefile) | One-command install and run targets for both (`make help`) |
 
 ## Environment
@@ -83,6 +85,33 @@ Fly the drone (QGroundControl, or `commander takeoff` in the PX4 shell) to build
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)
 ```
 
+Options (all can be combined):
+
+| Option | What |
+|---|---|
+| `make rtabmap ODOMETRY=sim` | Use Gazebo's simulated odometry (`/uav/odom`) instead of RTAB-Map's visual odometry. It is ground truth, so use `visual` (default) when measuring localization accuracy |
+| `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
+| `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
+
+Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
+NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a
+warning) instead of being passed on, and it warns when odometry stops arriving and when it resumes.
+Visual odometry restarts right away when it loses track (`Odom/ResetCountdown 1`) instead of stalling.
+
+### Saving, reloading and monitoring the map
+
+```bash
+make save-map OUT=~/maps/warehouse          # current 2D occupancy grid -> warehouse.pgm + warehouse.yaml
+make load-map MAP=~/maps/warehouse.yaml     # publish it again on /map (latched) for other components
+make rtabmap NEW_MAP=false                  # or continue the full RTAB-Map map from its database
+make map-monitor                            # log map growth (known/occupied/free cells) to ~/.ros/map_growth.csv
+```
+
+The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map server can load it too.
+`map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
+be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
+(drop `use_sim_time`).
+
 ### Worlds
 
 The default world is `default_warehouse`, supplied by the professor. **It is not in this repo**:
@@ -107,7 +136,9 @@ Inputs, from the bridge:
 | `/uav/points` | `sensor_msgs/PointCloud2` | 3D point cloud (frame `camera_optical_frame`) |
 | `/uav/rgb/image` | `sensor_msgs/Image` | Color image |
 | `/uav/rgb/camera_info` | `sensor_msgs/CameraInfo` | Color intrinsics (same as depth) |
-| `/uav/odom` | `nav_msgs/Odometry` | **Ground truth** (`x500_depth_0/odom` → `x500_depth_0/base_footprint`), only for accuracy evaluation |
+| `/uav/lidar/points` | `sensor_msgs/PointCloud2` | 3D lidar, 16 beams, 0.9-100 m (frame `lidar_link`) |
+| `/uav/odom` | `nav_msgs/Odometry` | **Ground truth** (`x500_depth_0/odom` → `x500_depth_0/base_footprint`) |
+| `/uav/odom_checked` | `nav_msgs/Odometry` | `/uav/odom` after `odom_relay.py`: invalid samples dropped, frames `odom` → `base_link`, covariance filled in. Used by `ODOMETRY=sim` |
 | `/uav/imu` | `sensor_msgs/Imu` | IMU |
 | `/clock` | `rosgraph_msgs/Clock` | Sim time |
 
@@ -115,7 +146,7 @@ Outputs, from RTAB-Map:
 
 | Topic | Type | What |
 |---|---|---|
-| `/rtabmap/odom` | `nav_msgs/Odometry` | Estimated pose (visual odometry) |
+| `/rtabmap/odom` | `nav_msgs/Odometry` | Estimated pose (visual odometry; not published with `ODOMETRY=sim`) |
 | `/rtabmap/localization_pose` | `geometry_msgs/PoseWithCovarianceStamped` | Pose in the map |
 | `/rtabmap/mapPath` | `nav_msgs/Path` | Trajectory |
 | `/rtabmap/map` | `nav_msgs/OccupancyGrid` | 2D occupancy map, 5 cm cells |
@@ -132,6 +163,21 @@ ros2 topic hz /uav/points
 ros2 topic echo /uav/odom --once
 ros2 topic hz /rtabmap/odom
 ```
+
+## Automated tests
+
+```bash
+make test   # python3 -m pytest tests
+```
+
+The tests need only Python 3, pytest, NumPy and OpenCV (all installed with ROS 2), not a simulator,
+camera or ROS install. They cover:
+
+- `test_sensor_checks.py`: invalid or missing simulated odometry is detected and dropped.
+- `test_map_tools.py`: maps survive a save/reload round trip; map statistics track incremental growth.
+- `test_zed_usb_publisher.py`: camera failures do not crash the ZED USB publisher. A scripted fake
+  camera plays back a missing camera, failed and garbled reads, a USB disconnect mid-run, and an
+  offline or corrupt calibration download; the publisher must keep running and recover.
 
 ## Using the real ZED on a laptop (no NVIDIA GPU)
 
@@ -152,6 +198,9 @@ make zed-usb FLIP=true    # camera upside down (images turned, left/right swappe
   (it is stable while streaming). Disable it for Stereolabs devices once:
   `echo 'ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2b03", ATTR{power/control}="on"' | sudo tee /etc/udev/rules.d/99-zed-no-autosuspend.rules && sudo udevadm control --reload`
 - Only VGA over a USB 2 link: for USB 3, use a USB 3 port and try flipping the USB-C plug.
+- Camera problems never stop the publisher: it waits for an unplugged camera, reconnects after a USB
+  reset, skips garbled frames, and retries the calibration download until the network is back.
+  The launch file also restarts it if it ever exits.
 
 ## Running on the drone (Jetson + ZED)
 
