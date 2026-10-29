@@ -12,6 +12,7 @@ into ROS 2. On the real drone, a Jetson runs the same mapping with a Stereolabs 
 | [`jetson/`](jetson) | Real drone: install script and launch files for the Jetson + ZED |
 | [`zed_usb/`](zed_usb) | The real ZED on a laptop without an NVIDIA GPU (CPU depth, same topics as on the drone) |
 | [`Makefile`](Makefile) | One-command install and run targets for both (`make help`) |
+| [`tests/`](tests) | Test suite (`make test`): config consistency, ZED USB publisher, scripts + Makefile |
 
 ## Environment
 
@@ -190,6 +191,16 @@ make jetson ZED_MODEL=zed2i       # use your model: zed, zedm, zed2, zed2i, zedx
   `Grid/RangeMin` / `Vis/MinDepth`), so the drone's own props and legs don't end up in the map.
 - To watch the map from a laptop, use the same `ROS_DOMAIN_ID` on both and run `rtabmap_viz` there,
   or start with `rtabmap_viz:=true` if the Jetson has a screen.
+
+## Tests
+
+```bash
+make test
+```
+
+This checks that the models, launch files, ZED settings and scripts agree with each other, and
+unit-tests the ZED USB publisher. It needs no sudo, network, camera or running simulation, and
+takes a few seconds. See [`tests/README.md`](tests/README.md) for what is covered and the known issues.
 
 ## Troubleshooting
 
