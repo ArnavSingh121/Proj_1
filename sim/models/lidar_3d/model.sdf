@@ -75,7 +75,6 @@
 			</lidar>
 			<always_on>1</always_on>
 			<visualize>true</visualize>
-			<topic>lidar_3d</topic>
 			</sensor>
 			<gravity>true</gravity>
 			<velocity_decay />

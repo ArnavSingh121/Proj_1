@@ -36,6 +36,8 @@ def generate_launch_description():
         # The system OpenCV is built for NumPy 1; a NumPy 2 in ~/.local would break it.
         additional_env={'PYTHONNOUSERSITE': '1'},
         output='screen',
+        # The publisher waits out camera problems itself; this restarts it if it ever dies anyway.
+        respawn=True, respawn_delay=2.0,
     )
 
     # zed_camera_link -> left optical frame, as the ZED URDF places it (left lens 6 cm left of center).

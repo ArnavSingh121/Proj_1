@@ -143,15 +143,15 @@ def bridge(stubs, **env):
 
 
 def readme_inputs():
-    """{topic: type} from the README's 'Inputs, from the bridge' table."""
-    table = README.split('Inputs, from the bridge:')[1].split('Outputs, from RTAB-Map:')[0]
+    """{topic: type} from the README's 'Inputs, from the bridge' table (the first table after it)."""
+    table = README.split('Inputs, from the bridge:')[1].strip().split('\n\n')[0]
     return dict(re.findall(r'^\| `(/[^`]+)` \| `([^`]+)` \|', table, re.M))
 
 
 @needs_ros_setup
 def test_bridge_publishes_exactly_the_readme_inputs(stubs):
     bridges, remaps = bridge(stubs)
-    assert len(bridges) == 8 and all(direction == '[' for _, direction, _ in bridges.values())
+    assert len(bridges) == 9 and all(direction == '[' for _, direction, _ in bridges.values())
     assert set(remaps) == set(bridges), 'every bridged Gazebo topic gets a ROS name'
     ros_topics = {remaps[gz]: ros_type.replace('/msg/', '/') for gz, (ros_type, _, _) in bridges.items()}
     assert ros_topics == readme_inputs()
@@ -165,6 +165,7 @@ def test_bridge_message_types(stubs):
         '/uav/depth/camera_info': ('sensor_msgs/msg/CameraInfo', 'gz.msgs.CameraInfo'),
         '/uav/rgb/image': ('sensor_msgs/msg/Image', 'gz.msgs.Image'),
         '/uav/rgb/camera_info': ('sensor_msgs/msg/CameraInfo', 'gz.msgs.CameraInfo'),
+        '/uav/lidar/points': ('sensor_msgs/msg/PointCloud2', 'gz.msgs.PointCloudPacked'),
         '/uav/odom': ('nav_msgs/msg/Odometry', 'gz.msgs.OdometryWithCovariance'),
         '/uav/imu': ('sensor_msgs/msg/Imu', 'gz.msgs.IMU'),
         '/clock': ('rosgraph_msgs/msg/Clock', 'gz.msgs.Clock'),
@@ -191,13 +192,16 @@ def test_bridge_gazebo_topics_match_the_world_and_the_models(stubs, world):
     assert gz['/uav/odom'] == f'/model/{model}/odometry_with_covariance'
     assert gz['/uav/imu'] == f'/world/{world}/model/{model}/link/base_link/sensor/imu_sensor/imu'
     assert gz['/clock'] == f'/world/{world}/clock'
+    # gpu_lidar publishes a LaserScan on <topic> and the 3D cloud on <topic>/points.
+    lidar = ET.parse(REPO / 'sim/models/lidar_3d/model.sdf').getroot().find(".//sensor[@type='gpu_lidar']")
+    assert gz['/uav/lidar/points'] == f'/{lidar.find("topic").text}/points'
 
 
 # ---- sim/rtabmap.sh, zed_usb/run.sh, jetson/run.sh ----
 
 @needs_ros_setup
 @pytest.mark.parametrize('script, launch_file, args', [
-    ('sim/rtabmap.sh', 'sim/rtabmap.launch.py', []),
+    ('sim/rtabmap.sh', 'sim/rtabmap.launch.py', ['odometry:=sim', 'lidar:=true', 'new_map:=false']),
     ('zed_usb/run.sh', 'zed_usb/zed_usb_rtabmap.launch.py', ['flip:=true', 'new_map:=false']),
 ])
 def test_launcher_runs_its_launch_file_by_absolute_path(stubs, tmp_path, script, launch_file, args):
@@ -375,7 +379,16 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['sim', 'PX4_DIR=/px4'], './sim/launch_sim.sh /px4'),
     (['models', 'PX4_DIR=/px4'], './sim/install_models.sh /px4'),
     (['bridge'], './sim/bridge.sh'),
-    (['rtabmap'], './sim/rtabmap.sh'),
+    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true'),
+    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false'], './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false'),
+    (['save-map', 'OUT=/maps/w'],
+     'source /opt/ros/humble/setup.bash && python3 tools/save_map.py --ros-args -p out:=/maps/w'),
+    (['load-map', 'MAP=/maps/w.yaml'],
+     'source /opt/ros/humble/setup.bash && python3 tools/load_map.py --ros-args -p map:=/maps/w.yaml'),
+    (['load-map', 'OUT=/maps/w'],  # MAP defaults to the map save-map wrote
+     'source /opt/ros/humble/setup.bash && python3 tools/load_map.py --ros-args -p map:=/maps/w.yaml'),
+    (['map-monitor'],
+     'source /opt/ros/humble/setup.bash && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true'),
     (['zed-usb'], './zed_usb/run.sh flip:=false'),
     (['zed-usb', 'FLIP=true'], './zed_usb/run.sh flip:=true'),
     (['jetson', 'ZED_MODEL=zed2i'], 'ZED_MODEL=zed2i ./jetson/run.sh'),
@@ -403,15 +416,13 @@ def dpkg_stub(stubs):
 
 
 def installed_px4(root, models=True):
-    """A fake PX4 checkout with a SITL build and (optionally) our models installed."""
+    """A fake PX4 checkout with a SITL build and (optionally) all our model files installed."""
     binary = root / 'build/px4_sitl_default/bin/px4'
     binary.parent.mkdir(parents=True)
     binary.write_text('')
     binary.chmod(0o755)
     if models:
-        target = root / 'Tools/simulation/gz/models/x500_depth/model.sdf'
-        target.parent.mkdir(parents=True)
-        shutil.copy(REPO / 'sim/models/x500_depth/model.sdf', target)
+        shutil.copytree(REPO / 'sim/models', root / 'Tools/simulation/gz/models')
     return root
 
 
@@ -445,9 +456,11 @@ def test_check_accepts_an_installed_system(stubs, tmp_path):
         assert result.returncode == 0 and 'Everything is installed.' in result.stdout
 
 
-def test_check_spots_outdated_models_in_px4(stubs, tmp_path):
+@pytest.mark.parametrize('model_file', ['x500_depth/model.sdf', 'OakD-Lite/model.sdf', 'lidar_3d/model.sdf'])
+def test_check_spots_outdated_models_in_px4(stubs, tmp_path, model_file):
+    """Every file we ship is compared, not just x500_depth (an old lidar_3d had a second <topic>)."""
     px4 = installed_px4(tmp_path / 'PX4')
-    (px4 / 'Tools/simulation/gz/models/x500_depth/model.sdf').write_text('stock\n')
+    (px4 / 'Tools/simulation/gz/models' / model_file).write_text('stock\n')
     result = check(stubs, tmp_path, installed='*', PX4_DIR=px4)
     assert result.returncode != 0 and 'MISSING  custom models in PX4' in result.stdout
 

@@ -18,6 +18,7 @@ ros2 run ros_gz_bridge parameter_bridge \
   /camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
   $CAM/image@sensor_msgs/msg/Image[gz.msgs.Image \
   $CAM/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
+  /lidar_points/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked \
   /model/$MODEL/odometry_with_covariance@nav_msgs/msg/Odometry[gz.msgs.OdometryWithCovariance \
   $IMU@sensor_msgs/msg/Imu[gz.msgs.IMU \
   /world/$WORLD/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
@@ -27,6 +28,7 @@ ros2 run ros_gz_bridge parameter_bridge \
   -r /camera_info:=/uav/depth/camera_info \
   -r $CAM/image:=/uav/rgb/image \
   -r $CAM/camera_info:=/uav/rgb/camera_info \
+  -r /lidar_points/points:=/uav/lidar/points \
   -r /model/$MODEL/odometry_with_covariance:=/uav/odom \
   -r $IMU:=/uav/imu \
   -r /world/$WORLD/clock:=/clock

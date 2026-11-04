@@ -26,22 +26,23 @@ REQUEST = {'VGA': (1344, 376), 'HD720': (2560, 720), 'HD1080': (3840, 1080), 'HD
 
 
 def read_sysfs(path):
-    """Contents of a sysfs attribute, '' if the device doesn't have it."""
-    if not os.path.exists(path):
+    """Contents of a sysfs file, or '' if it is missing (e.g. the device was unplugged mid-scan)."""
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
         return ''
-    with open(path) as f:
-        return f.read().strip()
 
 
-def find_zed():
-    """Video device and serial number of the first ZED on USB."""
+def find_zed(sys_root='/sys'):
+    """Video device and serial number of the first ZED on USB (None for whichever is not found)."""
     # Numeric order: a ZED has a capture node and, right after it, a metadata node with the same
     # name; sorted as strings, video10 (metadata) would come before video9 (capture).
-    nodes = sorted(glob.glob('/sys/class/video4linux/video*'),
+    nodes = sorted(glob.glob(f'{sys_root}/class/video4linux/video*'),
                    key=lambda p: int(os.path.basename(p)[len('video'):]))
     device = next((f'/dev/{os.path.basename(p)}' for p in nodes if read_sysfs(f'{p}/name').startswith('ZED')), None)
     # The serial number is on the camera's HID (IMU) interface; the video interface reports a placeholder.
-    serial = next((read_sysfs(f'{d}/serial') for d in glob.glob('/sys/bus/usb/devices/*')
+    serial = next((read_sysfs(f'{d}/serial') for d in sorted(glob.glob(f'{sys_root}/bus/usb/devices/*'))
                    if read_sysfs(f'{d}/idVendor') == '2b03' and 'HID' in read_sysfs(f'{d}/product')
                    and read_sysfs(f'{d}/serial')), None)
     return device, serial
@@ -128,34 +129,25 @@ class ZedUsb(Node):
         self.declare_parameter('calib_dir', os.path.expanduser('~/.local/share/zed/settings'))
         p = lambda n: self.get_parameter(n).value
         self.min_depth, self.max_depth, self.flip = p('min_depth'), p('max_depth'), p('flip')
+        self.failures = 0  # consecutive failed reads
+        self.cap = None
 
-        device, serial = find_zed()
-        if not device or not serial:
-            self.get_logger().warn('Waiting for a ZED camera on USB...')
-            while not (device and serial):
-                time.sleep(1.0)
-                device, serial = find_zed()
-            time.sleep(2.0)  # let the camera finish starting up after it appears
         self.fixed_device = p('device')
-        device = self.fixed_device or device
-        rw, rh = REQUEST[p('resolution')]
+        resolution = p('resolution')
+        if resolution not in REQUEST:
+            self.get_logger().warn(f'Unknown resolution {resolution!r}, using VGA (choices: {", ".join(REQUEST)})')
+            resolution = 'VGA'
+        rw, rh = REQUEST[resolution]
         self.request = (rw, rh, p('fps'))
-        self.cap = self.open(device)
-        ok, frame = self.cap.read()
-        if not ok:
-            raise RuntimeError(f'Cannot read from {device}')
+        # Never exits on a missing or misbehaving camera: waits and retries until a usable frame arrives.
+        device, serial, frame = self.wait_for_camera()
         self.w, self.h = frame.shape[1] // 2, frame.shape[0]
         res = RES_NAMES[self.w]
         if (self.w * 2, self.h) != (rw, rh):
-            self.get_logger().warn(f'Asked for {p("resolution")}, the camera gives {res} {self.w}x{self.h} '
+            self.get_logger().warn(f'Asked for {resolution}, the camera gives {res} {self.w}x{self.h} '
                                    '(a USB 2 link only carries VGA: use a USB 3 port / flip the USB-C plug)')
 
-        calib = os.path.join(p('calib_dir'), f'SN{serial}.conf')
-        if not os.path.exists(calib):
-            os.makedirs(p('calib_dir'), exist_ok=True)
-            self.get_logger().info(f'Downloading factory calibration for SN {serial}')
-            download_calibration(serial, calib)
-        cal = load_calibration(calib, res, self.w, self.h)
+        cal = self.wait_for_calibration(os.path.join(p('calib_dir'), f'SN{serial}.conf'), serial, res)
         if self.flip:
             cal = flip_calibration(*cal, self.w, self.h)
         Kl, Dl, Kr, Dr, R, T = cal
@@ -185,6 +177,50 @@ class ZedUsb(Node):
             f'({num_disp} disparities)')
         self.check_alignment(frame)
 
+    def wait_for_camera(self, retry=1.0):
+        """(device, serial, first frame) once a ZED is found and gives a frame of a known resolution."""
+        warned = False
+        while True:
+            device, serial = find_zed()
+            device = self.fixed_device or device
+            if device and serial:
+                if warned:
+                    time.sleep(2.0)  # let the camera finish starting up after it appears
+                try:
+                    self.cap = self.open(device)
+                    ok, frame = self.cap.read()
+                except cv2.error as e:
+                    ok, frame = False, None
+                    self.get_logger().warn(f'Cannot open {device}: {e}')
+                if ok and frame is not None and frame.ndim == 3 and frame.shape[1] // 2 in RES_NAMES:
+                    return device, serial, frame
+                if self.cap is not None:
+                    self.cap.release()
+                shape = 'no frame' if not ok or frame is None else f'unexpected frame size {frame.shape}'
+                self.get_logger().warn(f'ZED on {device} is not delivering video yet ({shape}), retrying',
+                                       throttle_duration_sec=10.0)
+            elif not warned:
+                self.get_logger().warn('Waiting for a ZED camera on USB...')
+            warned = True
+            time.sleep(retry)
+
+    def wait_for_calibration(self, calib, serial, res, retry=5.0):
+        """Stereo calibration, downloading the factory file first if needed; retries if offline or invalid."""
+        while True:
+            try:
+                if not os.path.exists(calib):
+                    os.makedirs(os.path.dirname(calib), exist_ok=True)
+                    self.get_logger().info(f'Downloading factory calibration for SN {serial}')
+                    download_calibration(serial, calib)
+                return load_calibration(calib, res, self.w, self.h)
+            except (OSError, RuntimeError, KeyError, ValueError, configparser.Error) as e:
+                self.get_logger().error(f'No usable calibration for SN {serial} ({type(e).__name__}: {e}); '
+                                        f'retrying in {retry:.0f} s. Check the network, or put {calib} in '
+                                        'place by hand (https://calib.stereolabs.com/?SN=<serial>)')
+                if not isinstance(e, OSError) and os.path.exists(calib):
+                    os.replace(calib, calib + '.bad')  # corrupt download: fetch it again next time
+                time.sleep(retry)
+
     def open(self, device):
         cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
         rw, rh, fps = self.request
@@ -198,13 +234,17 @@ class ZedUsb(Node):
         self.cap.release()
         device = self.fixed_device or find_zed()[0]
         if device:
-            self.cap = self.open(device)
-            ok, frame = self.cap.read()
-            if ok and frame.shape[1] // 2 == self.w and frame.shape[0] == self.h:
+            try:
+                self.cap = self.open(device)
+                ok, frame = self.cap.read()
+            except cv2.error:
+                ok, frame = False, None
+            if ok and frame is not None and frame.shape[1] // 2 == self.w and frame.shape[0] == self.h:
                 self.get_logger().info(f'Camera back on {device}')
-                return
+                return True
             self.cap.release()
         time.sleep(1.0)
+        return False
 
     def split(self, frame):
         left, right = frame[:, :self.w], frame[:, self.w:]
@@ -254,39 +294,61 @@ class ZedUsb(Node):
         m.data = array.tobytes()
         return m
 
-    def spin(self):
-        failures = 0
-        while rclpy.ok():
+    def depth(self, left, right):
+        """Depth in meters from a rectified pair; NaN where there is no match or it is out of range."""
+        disp = self.sgbm.compute(cv2.cvtColor(left, cv2.COLOR_BGR2GRAY),
+                                 cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)).astype(np.float32) / 16.0
+        return disparity_to_depth(disp, self.fx_baseline, self.min_depth, self.max_depth)
+
+    def step(self):
+        """Reads, processes and publishes one frame. Returns False if the camera gave nothing usable.
+        Never raises because of the camera: a failed read reconnects, a bad frame is skipped."""
+        try:
             ok, frame = self.cap.read()
-            if not ok:
-                failures += 1
-                if failures == 1:
-                    self.get_logger().warn('Camera read failed (USB disconnect?), reconnecting')
-                self.reopen()
-                continue
-            failures = 0
-            stamp = self.get_clock().now().to_msg()
+        except cv2.error:
+            ok, frame = False, None
+        if not ok or frame is None:
+            self.failures += 1
+            if self.failures == 1:
+                self.get_logger().warn('Camera read failed (USB disconnect?), reconnecting')
+            self.reopen()
+            return False
+        self.failures = 0
+        if frame.ndim != 3 or frame.shape[:2] != (self.h, self.w * 2):
+            self.get_logger().warn(f'Skipping frame of unexpected size {frame.shape}', throttle_duration_sec=5.0)
+            return False
+        stamp = self.get_clock().now().to_msg()
+        try:
             left, right = self.split(frame)
-            disp = self.sgbm.compute(cv2.cvtColor(left, cv2.COLOR_BGR2GRAY),
-                                     cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)).astype(np.float32) / 16.0
-            depth = disparity_to_depth(disp, self.fx_baseline, self.min_depth, self.max_depth)
-            self.pub_rgb.publish(self.image(stamp, left, 'bgr8'))
-            self.pub_rgb_info.publish(self.info(stamp))
-            self.pub_depth.publish(self.image(stamp, depth, '32FC1'))
-            self.pub_depth_info.publish(self.info(stamp))
+            depth = self.depth(left, right)
+        except cv2.error as e:
+            self.get_logger().warn(f'Skipping frame: {e}', throttle_duration_sec=5.0)
+            return False
+        self.pub_rgb.publish(self.image(stamp, left, 'bgr8'))
+        self.pub_rgb_info.publish(self.info(stamp))
+        self.pub_depth.publish(self.image(stamp, depth, '32FC1'))
+        self.pub_depth_info.publish(self.info(stamp))
+        return True
+
+    def spin(self):
+        while rclpy.ok():
+            self.step()
             rclpy.spin_once(self, timeout_sec=0)
 
 
 def main():
     rclpy.init()
-    node = ZedUsb()
+    node = None
     try:
+        node = ZedUsb()
         node.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        node.cap.release()
-        node.destroy_node()
+        if node is not None:
+            if node.cap is not None:
+                node.cap.release()
+            node.destroy_node()
         rclpy.try_shutdown()
 
 

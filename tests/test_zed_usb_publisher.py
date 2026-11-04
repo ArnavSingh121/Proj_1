@@ -137,10 +137,25 @@ def log(monkeypatch):
 
 @pytest.fixture
 def sleeps(monkeypatch):
-    """time.sleep in the publisher, recorded instead of waited for."""
-    calls = []
-    monkeypatch.setattr(pub.time, 'sleep', calls.append)
+    """time.sleep in the publisher, recorded instead of waited for (see Sleeps)."""
+    calls = Sleeps()
+    monkeypatch.setattr(pub.time, 'sleep', calls)
     return calls
+
+
+class Retried(Exception):
+    """Raised by the patched time.sleep to end a retry loop the publisher would otherwise run forever."""
+
+
+class Sleeps(list):
+    """Recorded time.sleep calls. The publisher never gives up on the camera or the calibration, so a
+    test that wants to see it retry sets `limit`: the sleep after that many raises Retried."""
+    limit = None
+
+    def __call__(self, seconds):
+        self.append(seconds)
+        if self.limit is not None and len(self) > self.limit:
+            raise Retried
 
 
 @pytest.fixture
@@ -183,6 +198,7 @@ def bare_node(**attrs):
     """A ZedUsb without running __init__ (no camera, no rclpy.init), for testing single methods."""
     node = pub.ZedUsb.__new__(pub.ZedUsb)
     node.w, node.h, node.flip = W, H, False
+    node.failures = 0
     node.map_l = node.map_r = identity_maps()
     node.frame_id = 'zed_left_camera_frame_optical'
     node.P = np.array([[350.0, 0, 335.5, 0], [0, 350.0, 187.5, 0], [0, 0, 1, 0]])
@@ -388,30 +404,57 @@ def test_existing_calibration_is_not_downloaded_again(make_node, monkeypatch):
     make_node([side_by_side(*stereo_pair())])
 
 
-def test_interrupted_download_leaves_no_calibration_file(make_node, monkeypatch, tmp_path):
-    """Otherwise every later start would trust the partial SN<serial>.conf."""
+def test_interrupted_download_leaves_no_calibration_file(make_node, monkeypatch, tmp_path, log, sleeps):
+    """The node keeps retrying, and never leaves a partial SN<serial>.conf that a retry or a later
+    start would trust."""
+    attempts = []
+
     def urlretrieve(url, path):
+        attempts.append(path)
         with open(path, 'w') as f:
             f.write('[LEFT_CAM_VGA]\nfx=35')
         raise OSError('connection reset')
 
     monkeypatch.setattr(pub.urllib.request, 'urlretrieve', urlretrieve)
-    with pytest.raises(OSError):
+    sleeps.limit = 2
+    with pytest.raises(Retried):
         make_node([side_by_side(*stereo_pair())], calibration=False)
+    assert len(attempts) == 3 and sleeps == [5.0, 5.0, 5.0]
     assert list((tmp_path / '.local/share/zed/settings').iterdir()) == []
+    assert all('connection reset' in m for m in log.messages('error'))
 
 
 @pytest.mark.parametrize('body', ['<html><body>Not found</body></html>', '[LEFT_CAM_VGA]\nfx=350\n'],
                          ids=['error-page', 'no-stereo-section'])
-def test_download_that_is_not_a_calibration_file_is_rejected(make_node, monkeypatch, tmp_path, body):
+def test_download_that_is_not_a_calibration_file_is_rejected(make_node, monkeypatch, tmp_path, log, sleeps,
+                                                              body):
     def urlretrieve(url, path):
         with open(path, 'w') as f:
             f.write(body)
 
     monkeypatch.setattr(pub.urllib.request, 'urlretrieve', urlretrieve)
-    with pytest.raises(RuntimeError, match=f'SN {SERIAL} is not a ZED calibration file'):
+    sleeps.limit = 1
+    with pytest.raises(Retried):
         make_node([side_by_side(*stereo_pair())], calibration=False)
     assert list((tmp_path / '.local/share/zed/settings').iterdir()) == []
+    assert any(f'SN {SERIAL} is not a ZED calibration file' in m for m in log.messages('error'))
+
+
+def test_calibration_download_is_retried_until_it_succeeds(make_node, monkeypatch, tmp_path, sleeps):
+    served = iter(['<html>Service unavailable</html>', None])
+
+    def urlretrieve(url, path):
+        body = next(served)
+        if body is None:
+            write_conf(tmp_path / 'served.conf', distortion=False, rotation=False).replace(path)
+        else:
+            with open(path, 'w') as f:
+                f.write(body)
+
+    monkeypatch.setattr(pub.urllib.request, 'urlretrieve', urlretrieve)
+    node, _ = make_node([side_by_side(*stereo_pair())], calibration=False)
+    assert sleeps == [5.0] and node.fx_baseline > 0
+    assert [p.name for p in (tmp_path / '.local/share/zed/settings').iterdir()] == [f'SN{SERIAL}.conf']
 
 
 def test_warns_when_the_camera_gives_a_lower_resolution_than_asked(make_node, log):
@@ -420,9 +463,12 @@ def test_warns_when_the_camera_gives_a_lower_resolution_than_asked(make_node, lo
     assert any('USB 2' in m for m in log.messages('warn'))
 
 
-def test_unreadable_camera_fails_at_start(make_node):
-    with pytest.raises(RuntimeError, match='Cannot read from /dev/video7'):
+def test_unreadable_camera_is_retried_at_start(make_node, log, sleeps):
+    """A camera that gives no frame is closed and opened again, instead of stopping the node."""
+    sleeps.limit = 3
+    with pytest.raises(Retried):
         make_node([None])
+    assert any('/dev/video7 is not delivering video yet (no frame)' in m for m in log.messages('warn'))
 
 
 def test_waits_for_the_camera_to_appear(make_node, log, sleeps):

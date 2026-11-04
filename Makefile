@@ -22,6 +22,13 @@ QGC_APP  ?= $(HOME)/QGroundControl-v5.0.8-x86_64.AppImage
 ZED_MODEL ?=
 # `make zed-usb`: true if the ZED is upside down
 FLIP ?= false
+# `make rtabmap`: odometry source (visual | sim), simulated 3D lidar (true | false), fresh map or reload
+ODOMETRY ?= visual
+LIDAR    ?= false
+NEW_MAP  ?= true
+# `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
+OUT ?= $(HOME)/maps/map
+MAP ?= $(OUT).yaml
 # `make test`: extra pytest arguments, e.g. make test PYTEST_ARGS='-k bridge -v'
 PYTEST_ARGS ?=
 
@@ -56,7 +63,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
-	check test sim bridge rtabmap zed-usb jetson-deps jetson-check jetson
+	check test sim bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -154,7 +161,8 @@ check: ## Report what is installed and what is missing (no sudo)
 	if [ -x $(PX4_DIR)/build/px4_sitl_default/bin/px4 ]; then \
 		echo "  ok       PX4 SITL build ($$(git -C $(PX4_DIR) describe --tags --always))"; \
 	else echo "  MISSING  PX4 SITL build in $(PX4_DIR) (make px4)"; missing=1; fi; \
-	if cmp -s sim/models/x500_depth/model.sdf $(PX4_DIR)/Tools/simulation/gz/models/x500_depth/model.sdf; then \
+	if (cd sim/models && find . -type f) | while read -r f; do \
+			cmp -s sim/models/$$f $(PX4_DIR)/Tools/simulation/gz/models/$$f || exit 1; done; then \
 		echo "  ok       custom models installed in PX4"; \
 	else echo "  MISSING  custom models in PX4 (make models)"; missing=1; fi; \
 	if [ -x $(QGC_APP) ]; then echo "  ok       QGroundControl"; \
@@ -175,8 +183,17 @@ sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1)
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh
 
-rtabmap: ## Run RTAB-Map RGB-D SLAM on the bridged topics (terminal 3)
-	./sim/rtabmap.sh
+rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false
+	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP)
+
+save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
+	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
+
+load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/maps/warehouse.yaml
+	source $(ROS_SETUP) && python3 tools/load_map.py --ros-args -p map:=$(MAP)
+
+map-monitor: ## Log map growth to ~/.ros/map_growth.csv while RTAB-Map runs (sim time)
+	source $(ROS_SETUP) && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true
 
 zed-usb: ## Run RTAB-Map on a ZED plugged into this laptop (no NVIDIA GPU), e.g. make zed-usb FLIP=true
 	./zed_usb/run.sh flip:=$(FLIP)

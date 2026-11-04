@@ -1,4 +1,4 @@
-"""Shared helpers for the Proj_1 test suite (tiers 1-3, see tests/README.md).
+"""Shared helpers for the Proj_1 test suite (see tests/README.md).
 
 None of these tests need a running ROS graph, a camera, PX4, a GPU or the network:
 - launch files and the publisher are read with `ast` instead of imported where possible, because
@@ -10,11 +10,17 @@ import ast
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+# Lets the tests import the scripts in sim/, tools/ and zed_usb/ directly. No ROS install is needed for
+# those: test_zed_usb_failures.py swaps in a small stand-in for rclpy (ros_stub.py).
+for d in ('sim', 'tools', 'zed_usb', 'tests'):
+    sys.path.insert(0, str(REPO / d))
+
 ROS_SETUP = Path('/opt/ros/humble/setup.bash')
 # PX4 checkout used by the optional checks against PX4's stock models (same default as the Makefile).
 PX4_DIR = Path(os.environ.get('PX4_DIR', Path.home() / 'PX4-Autopilot'))
@@ -105,12 +111,33 @@ def list_items(path, keyword):
     return lists
 
 
-def static_tf(path):
-    """Arguments of the static_transform_publisher in a launch file, as {'--x': '0.1', ...}."""
-    found = [items for items in list_items(path, 'arguments') if '--child-frame-id' in items]
-    assert len(found) == 1, f'expected one static_transform_publisher in {path}'
-    items = found[0]
-    return dict(zip(items[::2], items[1::2]))
+def static_tf(path, child=None):
+    """Arguments of a static_transform_publisher in a launch file, as {'--x': '0.1', ...}.
+
+    `child` picks the transform by its --child-frame-id when the file has several (sim: camera and lidar).
+    """
+    found = [dict(zip(items[::2], items[1::2])) for items in list_items(path, 'arguments')
+             if '--child-frame-id' in items]
+    if child is not None:
+        found = [tf for tf in found if tf['--child-frame-id'] == child]
+    assert len(found) == 1, f'expected one static_transform_publisher{f" to {child}" if child else ""} in {path}'
+    return found[0]
+
+
+def assigned_values(path, name):
+    """Values assigned to `name` anywhere in a file (also inside functions) that evaluate from constants.
+
+    For launch arguments built in a function at launch time, e.g. `rtabmap_args = SELF_FILTER`.
+    """
+    consts = module_constants(path)
+    values = []
+    for node in ast.walk(ast.parse(Path(path).read_text())):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == name):
+            value = _try_eval(node.value, consts)
+            if value is not UNEVALUATED:
+                values.append(value)
+    return values
 
 
 def declared_parameters(path):

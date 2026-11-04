@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import yaml
 
-from conftest import (PX4_MODELS, REPO, UNEVALUATED, declared_parameters, launch_arguments,
+from conftest import (PX4_MODELS, REPO, UNEVALUATED, assigned_values, declared_parameters, launch_arguments,
                       list_items, module_constants, run, static_tf)
 
 MODELS = REPO / 'sim/models'
@@ -163,10 +163,26 @@ def test_sim_static_tf_position_is_the_camera_mount_in_the_sdf():
     """CAMERA_XYZ = OakD-Lite include pose in x500_depth + sensor pose in OakD-Lite."""
     include = next(i for i in sdf('x500_depth').iter('include') if i.find('uri').text == 'model://OakD-Lite')
     expected = pose(include.find('pose').text)[:3] + pose(sensor('OakD-Lite', 'IMX214').find('pose').text)[:3]
-    tf = static_tf(SIM_LAUNCH)
+    tf = static_tf(SIM_LAUNCH, child='camera_optical_frame')  # the frame the bridged images carry
     assert [float(tf[k]) for k in ('--x', '--y', '--z')] == pytest.approx(expected.tolist(), abs=1e-9)
     assert tf['--frame-id'] == 'base_link'
-    assert tf['--child-frame-id'] == 'camera_optical_frame'  # the frame the bridged images carry
+
+
+def test_sim_lidar_tf_is_the_lidar_mount_in_the_sdf():
+    """LIDAR_XYZ = lidar_3d include pose in x500_depth + gpu_lidar sensor pose in lidar_3d: the points are
+    stamped 'lidar_link' (gz_frame_id) but measured from the sensor."""
+    include = next(i for i in sdf('x500_depth').iter('include') if i.find('uri').text == 'model://lidar_3d')
+    lidar = sensor('lidar_3d', 'gpu_lidar')
+    expected = pose(include.find('pose').text)[:3] + pose(lidar.find('pose').text)[:3]
+    tf = static_tf(SIM_LAUNCH, child=lidar.find('gz_frame_id').text)
+    assert [float(tf[k]) for k in ('--x', '--y', '--z')] == pytest.approx(expected.tolist(), abs=1e-9)
+    assert tf['--frame-id'] == 'base_link'
+    assert all(float(tf.get(k, 0)) == 0 for k in ('--roll', '--pitch', '--yaw'))
+
+
+def test_lidar_has_a_single_topic():
+    """Two <topic> tags made the lidar's topic ambiguous; sim/bridge.sh relies on 'lidar_points'."""
+    assert [t.text for t in sensor('lidar_3d', 'gpu_lidar').findall('topic')] == ['lidar_points']
 
 
 @pytest.mark.parametrize('launch, parent, child', [
@@ -175,8 +191,8 @@ def test_sim_static_tf_position_is_the_camera_mount_in_the_sdf():
 ])
 def test_static_tf_turns_body_axes_into_optical_axes(launch, parent, child):
     """Optical convention (REP 103): z forward, x right, y down, in a body frame x forward, y left, z up."""
-    tf = static_tf(launch)
-    assert (tf['--frame-id'], tf['--child-frame-id']) == (parent, child)
+    tf = static_tf(launch, child=child)
+    assert tf['--frame-id'] == parent
     r = rpy_matrix(*(float(tf.get(k, 0)) for k in ('--roll', '--pitch', '--yaw')))
     np.testing.assert_allclose(r @ [0, 0, 1], [1, 0, 0], atol=1e-4)   # optical z = forward
     np.testing.assert_allclose(r @ [1, 0, 0], [0, -1, 0], atol=1e-4)  # optical x = right
@@ -206,8 +222,11 @@ def test_rtabmap_receives_the_self_filter(launch):
     consts = module_constants(launch)
     assert consts['ODOM_SELF_FILTER'] in args['odom_args']
     # rtabmap_args is a substitution list in the Jetson/USB files; the filter is its literal part.
+    # The sim file builds it at launch time from its options, starting from `rtabmap_args = SELF_FILTER`.
     rtabmap_args = args['rtabmap_args']
     parts = rtabmap_args if isinstance(rtabmap_args, list) else [rtabmap_args]
+    if rtabmap_args is UNEVALUATED:
+        parts = assigned_values(launch, 'rtabmap_args')
     assert any(isinstance(p, str) and consts['SELF_FILTER'] in p for p in parts)
 
 
