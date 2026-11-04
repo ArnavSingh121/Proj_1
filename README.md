@@ -57,6 +57,10 @@ Our drone needs custom Gazebo models, in [`sim/models/`](sim/models):
 | `x500_depth` | Adds the OdometryPublisher plugin (ground-truth odometry, 3D) and a 3D lidar |
 | `OakD-Lite` | 640x480 RGB + depth, frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
 | `lidar_3d` | 3D lidar model (not in stock PX4) |
+| `depot` | Warehouse building, shelves and crates of the `default_warehouse` world (not in stock PX4; Open Robotics, from Gazebo Fuel) |
+| `person` | Standing person, placed 3 times in `default_warehouse` (not in stock PX4; Marina Kollmitz, from Gazebo Fuel) |
+
+The same step copies our worlds, in [`sim/worlds/`](sim/worlds), into PX4's `Tools/simulation/gz/worlds/`.
 
 `make deps` installs them. To re-copy them by hand (originals are backed up as `*.orig`):
 
@@ -114,9 +118,10 @@ be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3
 
 ### Worlds
 
-The default world is `default_warehouse`, supplied by the professor. **It is not in this repo**:
-copy `default_warehouse.sdf` into `~/PX4-Autopilot/Tools/simulation/gz/worlds/` (and any models
-it uses into `.../gz/models/`). Without it, `make sim` waits forever at "Waiting for Gazebo world".
+The default world is `default_warehouse`, supplied by the professor, in
+[`sim/worlds/default_warehouse.sdf`](sim/worlds/default_warehouse.sdf). It is not in stock PX4, and
+neither are the `depot` and `person` models it includes: `make models` installs all three. If one is
+missing, Gazebo logs `Unable to find uri[model://...]` and `make sim` waits forever at "Waiting for Gazebo world".
 
 Any other world works by passing the same `WORLD` to `make sim` and `make bridge`:
 
