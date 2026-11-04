@@ -72,7 +72,8 @@ def filter_values(flags):
 
 # ---- Gazebo models (sim/models) ----
 
-@pytest.mark.parametrize('path', sorted(MODELS.glob('*/*')), ids=lambda p: str(p.relative_to(MODELS)))
+@pytest.mark.parametrize('path', sorted(p for p in MODELS.glob('*/*') if p.is_file()),
+                         ids=lambda p: str(p.relative_to(MODELS)))
 def test_model_files_are_well_formed_xml(path):
     ET.parse(path)
 
@@ -114,7 +115,9 @@ def test_every_model_uri_is_in_the_repo_or_a_known_px4_asset():
         for uri in (e.text.strip() for e in ET.parse(path).getroot().iter('uri')):
             if uri in EXTERNAL_URIS:
                 continue
-            assert uri.startswith('model://'), f'{path}: unexpected uri {uri}'
+            if not uri.startswith('model://'):  # relative to the model folder (depot: meshes/Depot.dae)
+                assert (path.parent / uri).exists(), f'{path}: {uri} is not in its model folder'
+                continue
             assert (MODELS / uri[len('model://'):]).exists(), f'{path}: {uri} is not in sim/models'
 
 
@@ -122,6 +125,14 @@ def test_every_model_uri_is_in_the_repo_or_a_known_px4_asset():
 def test_external_uris_exist_in_px4():
     assert (PX4_MODELS / 'x500/model.sdf').is_file()
     assert (PX4_MODELS / 'OakD-Lite/meshes/OakDLite.dae').is_file()
+
+
+def test_every_world_include_is_in_sim_models():
+    """Gazebo hangs at "Waiting for Gazebo world" when an included model:// cannot be found."""
+    for path in (REPO / 'sim/worlds').glob('*.sdf'):
+        for uri in (e.text.strip() for e in ET.parse(path).getroot().iter('uri')):
+            assert uri.startswith('model://'), f'{path}: unexpected uri {uri}'
+            assert (MODELS / uri[len('model://'):] / 'model.sdf').is_file(), f'{path}: {uri} is not in sim/models'
 
 
 def test_x500_depth_joints_attach_links_of_the_included_models():

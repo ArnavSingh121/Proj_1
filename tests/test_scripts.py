@@ -66,6 +66,18 @@ def test_install_models_copies_every_model_file_and_backs_up_stock_ones(tmp_path
     assert (models / 'OakD-Lite/model.config').read_text() == 'stock OakD-Lite/model.config\n'
 
 
+def test_install_models_copies_the_worlds(tmp_path):
+    px4_tree(tmp_path / 'PX4')
+    result = run([str(REPO / 'sim/install_models.sh'), str(tmp_path / 'PX4')])
+    assert result.returncode == 0, result.stderr
+    worlds = sorted(p.name for p in (REPO / 'sim/worlds').iterdir())
+    assert 'default_warehouse.sdf' in worlds
+    assert sorted(re.findall(r'^installed world \./(.+)$', result.stdout, re.M)) == worlds
+    for name in worlds:
+        installed = tmp_path / 'PX4/Tools/simulation/gz/worlds' / name
+        assert installed.read_bytes() == (REPO / 'sim/worlds' / name).read_bytes(), name
+
+
 def test_install_models_rerun_keeps_the_original_backup(tmp_path):
     models = px4_tree(tmp_path / 'PX4')
     for _ in range(2):
@@ -416,13 +428,14 @@ def dpkg_stub(stubs):
 
 
 def installed_px4(root, models=True):
-    """A fake PX4 checkout with a SITL build and (optionally) all our model files installed."""
+    """A fake PX4 checkout with a SITL build and (optionally) all our model and world files installed."""
     binary = root / 'build/px4_sitl_default/bin/px4'
     binary.parent.mkdir(parents=True)
     binary.write_text('')
     binary.chmod(0o755)
     if models:
         shutil.copytree(REPO / 'sim/models', root / 'Tools/simulation/gz/models')
+        shutil.copytree(REPO / 'sim/worlds', root / 'Tools/simulation/gz/worlds')
     return root
 
 

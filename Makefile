@@ -136,7 +136,7 @@ px4: base ## Clone PX4 at PX4_REF, run its setup script, build SITL
 	bash $(PX4_DIR)/Tools/setup/ubuntu.sh --no-nuttx
 	$(MAKE) -C $(PX4_DIR) px4_sitl
 
-models: ## Copy our custom Gazebo models (sim/models) into PX4
+models: ## Copy our custom Gazebo models and worlds (sim/models, sim/worlds) into PX4
 	./sim/install_models.sh $(PX4_DIR)
 
 qgc: ## QGroundControl AppImage + its libraries
@@ -165,6 +165,10 @@ check: ## Report what is installed and what is missing (no sudo)
 			cmp -s sim/models/$$f $(PX4_DIR)/Tools/simulation/gz/models/$$f || exit 1; done; then \
 		echo "  ok       custom models installed in PX4"; \
 	else echo "  MISSING  custom models in PX4 (make models)"; missing=1; fi; \
+	if (cd sim/worlds && find . -type f) | while read -r f; do \
+			cmp -s sim/worlds/$$f $(PX4_DIR)/Tools/simulation/gz/worlds/$$f || exit 1; done; then \
+		echo "  ok       custom worlds installed in PX4"; \
+	else echo "  MISSING  custom worlds in PX4 (make models)"; missing=1; fi; \
 	if [ -x $(QGC_APP) ]; then echo "  ok       QGroundControl"; \
 	else echo "  MISSING  QGroundControl (make qgc)"; missing=1; fi; \
 	echo; \
