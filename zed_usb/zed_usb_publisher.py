@@ -36,13 +36,35 @@ def read_sysfs(path):
 
 def find_zed(sys_root='/sys'):
     """Video device and serial number of the first ZED on USB (None for whichever is not found)."""
-    device = next((f'/dev/{os.path.basename(p)}' for p in sorted(glob.glob(f'{sys_root}/class/video4linux/video*'))
-                   if read_sysfs(f'{p}/name').startswith('ZED')), None)
+    # Numeric order: a ZED has a capture node and, right after it, a metadata node with the same
+    # name; sorted as strings, video10 (metadata) would come before video9 (capture).
+    nodes = sorted(glob.glob(f'{sys_root}/class/video4linux/video*'),
+                   key=lambda p: int(os.path.basename(p)[len('video'):]))
+    device = next((f'/dev/{os.path.basename(p)}' for p in nodes if read_sysfs(f'{p}/name').startswith('ZED')), None)
     # The serial number is on the camera's HID (IMU) interface; the video interface reports a placeholder.
     serial = next((read_sysfs(f'{d}/serial') for d in sorted(glob.glob(f'{sys_root}/bus/usb/devices/*'))
                    if read_sysfs(f'{d}/idVendor') == '2b03' and 'HID' in read_sysfs(f'{d}/product')
                    and read_sysfs(f'{d}/serial')), None)
     return device, serial
+
+
+def download_calibration(serial, path):
+    """Downloads SN<serial>.conf to `path`, which only appears once complete and valid: a partial
+    download or an error page would otherwise be trusted on every later start."""
+    part = path + '.part'
+    try:
+        urllib.request.urlretrieve(CALIB_URL.format(serial), part)
+        c = configparser.ConfigParser()
+        try:
+            c.read(part)
+        except configparser.Error:
+            pass
+        if not c.has_section('STEREO'):
+            raise RuntimeError(f'Calibration download for SN {serial} is not a ZED calibration file')
+        os.replace(part, path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
 
 
 def load_calibration(path, res, w, h):
@@ -84,6 +106,14 @@ def flip_calibration(Kl, Dl, Kr, Dr, R, T, w, h):
         return D
 
     return k(Kr), d(Dr), k(Kl), d(Dl), F @ R.T @ F, -F @ R.T @ T
+
+
+def disparity_to_depth(disp, fx_baseline, min_depth, max_depth):
+    """Depth in meters from SGBM disparity in pixels; NaN where nothing matched or out of range."""
+    with np.errstate(divide='ignore'):
+        depth = np.where(disp > 0, fx_baseline / disp, np.nan).astype(np.float32)
+    depth[(depth < min_depth) | (depth > max_depth)] = np.nan
+    return depth
 
 
 class ZedUsb(Node):
@@ -181,11 +211,9 @@ class ZedUsb(Node):
                 if not os.path.exists(calib):
                     os.makedirs(os.path.dirname(calib), exist_ok=True)
                     self.get_logger().info(f'Downloading factory calibration for SN {serial}')
-                    tmp = calib + '.part'  # never leave a half-written file that looks valid
-                    urllib.request.urlretrieve(CALIB_URL.format(serial), tmp)
-                    os.replace(tmp, calib)
+                    download_calibration(serial, calib)
                 return load_calibration(calib, res, self.w, self.h)
-            except (OSError, KeyError, ValueError, configparser.Error) as e:
+            except (OSError, RuntimeError, KeyError, ValueError, configparser.Error) as e:
                 self.get_logger().error(f'No usable calibration for SN {serial} ({type(e).__name__}: {e}); '
                                         f'retrying in {retry:.0f} s. Check the network, or put {calib} in '
                                         'place by hand (https://calib.stereolabs.com/?SN=<serial>)')
@@ -270,10 +298,7 @@ class ZedUsb(Node):
         """Depth in meters from a rectified pair; NaN where there is no match or it is out of range."""
         disp = self.sgbm.compute(cv2.cvtColor(left, cv2.COLOR_BGR2GRAY),
                                  cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)).astype(np.float32) / 16.0
-        with np.errstate(divide='ignore'):
-            depth = np.where(disp > 0, self.fx_baseline / disp, np.nan).astype(np.float32)
-        depth[(depth < self.min_depth) | (depth > self.max_depth)] = np.nan
-        return depth
+        return disparity_to_depth(disp, self.fx_baseline, self.min_depth, self.max_depth)
 
     def step(self):
         """Reads, processes and publishes one frame. Returns False if the camera gave nothing usable.

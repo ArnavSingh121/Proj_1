@@ -13,7 +13,8 @@ if [ ! -d "$DST" ]; then
   exit 1
 fi
 
-for f in $(cd "$SRC" && find . -type f); do
+# NUL-separated, so file names with spaces stay whole.
+while IFS= read -r -d '' f; do
   target="$DST/$f"
   mkdir -p "$(dirname "$target")"
   if [ -f "$target" ] && [ ! -f "$target.orig" ]; then
@@ -21,4 +22,4 @@ for f in $(cd "$SRC" && find . -type f); do
   fi
   cp "$SRC/$f" "$target"
   echo "installed $f"
-done
+done < <(cd "$SRC" && find . -type f -print0)

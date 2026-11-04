@@ -4,6 +4,7 @@
 #   make help     list targets
 #   make deps     install everything (asks for sudo)
 #   make check    report what is installed / missing (no sudo, changes nothing)
+#   make test     run the test suite (tests/README.md)
 #   make jetson-deps / jetson-check / jetson   the same for the drone's Jetson (ZED + RTAB-Map + MAVROS)
 
 SHELL := /bin/bash
@@ -28,6 +29,8 @@ NEW_MAP  ?= true
 # `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml
+# `make test`: extra pytest arguments, e.g. make test PYTEST_ARGS='-k bridge -v'
+PYTEST_ARGS ?=
 
 ROS_SETUP := /opt/ros/humble/setup.bash
 GZ_KEYRING := /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
@@ -60,7 +63,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
-	check sim bridge rtabmap save-map load-map map-monitor test zed-usb jetson-deps jetson-check jetson
+	check test sim bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -168,6 +171,12 @@ check: ## Report what is installed and what is missing (no sudo)
 	if [ $$missing = 0 ]; then echo "Everything is installed."; \
 	else echo "Some dependencies are missing. Run 'make deps' or the target shown."; exit 1; fi
 
+# ROS is sourced for rclpy (publisher unit tests) and the launcher scripts; without it those tests skip.
+# PYTHONNOUSERSITE=1: the system OpenCV breaks if a NumPy 2 in ~/.local is picked up.
+test: ## Run the tests: config consistency, ZED USB publisher, scripts + Makefile (no sudo, no network)
+	@if [ -f $(ROS_SETUP) ]; then source $(ROS_SETUP); fi; \
+	PYTHONNOUSERSITE=1 python3 -m pytest tests $(PYTEST_ARGS)
+
 sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1)
 	./sim/launch_sim.sh $(PX4_DIR)
 
@@ -185,9 +194,6 @@ load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/map
 
 map-monitor: ## Log map growth to ~/.ros/map_growth.csv while RTAB-Map runs (sim time)
 	source $(ROS_SETUP) && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true
-
-test: ## Run the automated tests (no simulator or camera needed)
-	python3 -m pytest tests
 
 zed-usb: ## Run RTAB-Map on a ZED plugged into this laptop (no NVIDIA GPU), e.g. make zed-usb FLIP=true
 	./zed_usb/run.sh flip:=$(FLIP)

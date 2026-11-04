@@ -12,7 +12,7 @@ into ROS 2. On the real drone, a Jetson runs the same mapping with a Stereolabs 
 | [`jetson/`](jetson) | Real drone: install script and launch files for the Jetson + ZED |
 | [`zed_usb/`](zed_usb) | The real ZED on a laptop without an NVIDIA GPU (CPU depth, same topics as on the drone) |
 | [`tools/`](tools) | Save, reload and monitor the occupancy map (works with all three setups) |
-| [`tests/`](tests) | Automated tests (`make test`), no simulator or camera needed |
+| [`tests/`](tests) | Test suite (`make test`), no simulator or camera needed |
 | [`Makefile`](Makefile) | One-command install and run targets for both (`make help`) |
 
 ## Environment
@@ -138,9 +138,14 @@ Inputs, from the bridge:
 | `/uav/rgb/camera_info` | `sensor_msgs/CameraInfo` | Color intrinsics (same as depth) |
 | `/uav/lidar/points` | `sensor_msgs/PointCloud2` | 3D lidar, 16 beams, 0.9-100 m (frame `lidar_link`) |
 | `/uav/odom` | `nav_msgs/Odometry` | **Ground truth** (`x500_depth_0/odom` → `x500_depth_0/base_footprint`) |
-| `/uav/odom_checked` | `nav_msgs/Odometry` | `/uav/odom` after `odom_relay.py`: invalid samples dropped, frames `odom` → `base_link`, covariance filled in. Used by `ODOMETRY=sim` |
 | `/uav/imu` | `sensor_msgs/Imu` | IMU |
 | `/clock` | `rosgraph_msgs/Clock` | Sim time |
+
+From [`sim/odom_relay.py`](sim/odom_relay.py), which `make rtabmap` starts:
+
+| Topic | Type | What |
+|---|---|---|
+| `/uav/odom_checked` | `nav_msgs/Odometry` | `/uav/odom` with invalid samples dropped, frames `odom` → `base_link`, covariance filled in. Used by `ODOMETRY=sim` |
 
 Outputs, from RTAB-Map:
 
@@ -163,21 +168,6 @@ ros2 topic hz /uav/points
 ros2 topic echo /uav/odom --once
 ros2 topic hz /rtabmap/odom
 ```
-
-## Automated tests
-
-```bash
-make test   # python3 -m pytest tests
-```
-
-The tests need only Python 3, pytest, NumPy and OpenCV (all installed with ROS 2), not a simulator,
-camera or ROS install. They cover:
-
-- `test_sensor_checks.py`: invalid or missing simulated odometry is detected and dropped.
-- `test_map_tools.py`: maps survive a save/reload round trip; map statistics track incremental growth.
-- `test_zed_usb_publisher.py`: camera failures do not crash the ZED USB publisher. A scripted fake
-  camera plays back a missing camera, failed and garbled reads, a USB disconnect mid-run, and an
-  offline or corrupt calibration download; the publisher must keep running and recover.
 
 ## Using the real ZED on a laptop (no NVIDIA GPU)
 
@@ -239,6 +229,24 @@ make jetson ZED_MODEL=zed2i       # use your model: zed, zedm, zed2, zed2i, zedx
   `Grid/RangeMin` / `Vis/MinDepth`), so the drone's own props and legs don't end up in the map.
 - To watch the map from a laptop, use the same `ROS_DOMAIN_ID` on both and run `rtabmap_viz` there,
   or start with `rtabmap_viz:=true` if the Jetson has a screen.
+
+## Tests
+
+```bash
+make test
+```
+
+It needs no sudo, network, camera or running simulation, and takes a few seconds. It checks:
+
+- that the models, launch files, ZED settings and scripts agree with each other, and what the
+  scripts and Makefile targets would run;
+- the ZED USB publisher: calibration, depth, messages, and that camera failures (missing camera,
+  failed or garbled reads, a USB disconnect, an offline or corrupt calibration download) are
+  waited out instead of crashing it;
+- that invalid or missing simulated odometry is detected and dropped (`sim/sensor_checks.py`);
+- that maps survive a save/reload round trip and their statistics track incremental growth (`tools/`).
+
+See [`tests/README.md`](tests/README.md) for details.
 
 ## Troubleshooting
 
