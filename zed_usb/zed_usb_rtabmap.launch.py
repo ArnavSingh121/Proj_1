@@ -43,7 +43,7 @@ def generate_launch_description():
 
     camera = ExecuteProcess(
         cmd=['python3', os.path.join(HERE, 'zed_usb_publisher.py'), '--ros-args',
-             '-r', '__node:=zed_node', '-r', '__ns:=/zed', '-p', ['flip:=', LaunchConfiguration('flip')]],
+             '-p', ['flip:=', LaunchConfiguration('flip')]],  # node 'zed_usb', topics under /zed/zed_node/
         # The system OpenCV is built for NumPy 1; a NumPy 2 in ~/.local would break it.
         additional_env={'PYTHONNOUSERSITE': '1'},
         output='screen',

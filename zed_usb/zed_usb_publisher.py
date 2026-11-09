@@ -5,8 +5,9 @@
 # and publishes it under the same topics as the ZED ROS 2 wrapper, so RTAB-Map runs in the same
 # RGB-D setup as on the drone. Depth is classic stereo matching, not the SDK's neural depth.
 #
-# Run as node 'zed_node' in namespace 'zed' (zed_usb_rtabmap.launch.py does this). If a NumPy 2 in
-# ~/.local breaks the system OpenCV, run with PYTHONNOUSERSITE=1.
+# The node is named 'zed_usb' (the wrapper's is /zed/zed_node), so a check can tell which one produces
+# the depth (jetson/verify.py), and it refuses to start if the real ZED wrapper already publishes depth.
+# If a NumPy 2 in ~/.local breaks the system OpenCV, run with PYTHONNOUSERSITE=1.
 import array
 import configparser
 import glob
@@ -21,6 +22,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image
 
 CALIB_URL = 'https://calib.stereolabs.com/?SN={}'
+TOPIC_ROOT = '/zed/zed_node/'  # same topics as the ZED ROS 2 wrapper (camera 'zed', node 'zed_node')
 # Per-eye image width -> calibration section suffix in SN<serial>.conf
 RES_NAMES = {672: 'VGA', 1280: 'HD', 1920: 'FHD', 2208: '2K'}
 REQUEST = {'VGA': (1344, 376), 'HD720': (2560, 720), 'HD1080': (3840, 1080), 'HD2K': (4416, 1242)}
@@ -119,7 +121,7 @@ def disparity_to_depth(disp, fx_baseline, min_depth, max_depth):
 
 class ZedUsb(Node):
     def __init__(self):
-        super().__init__('zed_node')
+        super().__init__('zed_usb')
         self.declare_parameter('device', '')  # '' = first ZED found
         # CPU depth takes ~60 ms/frame at VGA; HD720 has 4x the pixels.
         self.declare_parameter('resolution', 'VGA')  # VGA, HD720, HD1080, HD2K (USB 2 only carries VGA)
@@ -169,10 +171,10 @@ class ZedUsb(Node):
             speckleRange=2, mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)
 
         self.frame_id = 'zed_left_camera_frame_optical'  # same frame name as the ZED wrapper
-        self.pub_rgb = self.create_publisher(Image, '~/rgb/color/rect/image', 10)
-        self.pub_rgb_info = self.create_publisher(CameraInfo, '~/rgb/color/rect/camera_info', 10)
-        self.pub_depth = self.create_publisher(Image, '~/depth/depth_registered', 10)
-        self.pub_depth_info = self.create_publisher(CameraInfo, '~/depth/camera_info', 10)
+        self.pub_rgb = self.create_publisher(Image, TOPIC_ROOT + 'rgb/color/rect/image', 10)
+        self.pub_rgb_info = self.create_publisher(CameraInfo, TOPIC_ROOT + 'rgb/color/rect/camera_info', 10)
+        self.pub_depth = self.create_publisher(Image, TOPIC_ROOT + 'depth/depth_registered', 10)
+        self.pub_depth_info = self.create_publisher(CameraInfo, TOPIC_ROOT + 'depth/camera_info', 10)
         self.get_logger().info(
             f'ZED SN {serial} on {device}: {res} {self.w}x{self.h}, baseline {self.fx_baseline / P1[0, 0]:.4f} m, '
             f'fx {P1[0, 0]:.1f}, flip {self.flip}, depth {self.min_depth}-{self.max_depth} m '
@@ -331,12 +333,26 @@ class ZedUsb(Node):
         self.pub_rgb_info.publish(self.info(stamp))
         self.pub_depth.publish(self.image(stamp, depth, '32FC1'))
         self.pub_depth_info.publish(self.info(stamp))
+        self.depth_filled = float(np.isfinite(depth).mean())
         return True
 
     def spin(self):
+        frames, since = 0, time.monotonic()
         while rclpy.ok():
-            self.step()
+            frames += self.step()
             rclpy.spin_once(self, timeout_sec=0)
+            if time.monotonic() - since > 10.0:  # a health line every 10 s
+                self.get_logger().info(f'{frames / (time.monotonic() - since):.1f} Hz, depth '
+                                       f'{getattr(self, "depth_filled", 0.0) * 100:.0f}% filled')
+                frames, since = 0, time.monotonic()
+
+
+def other_depth_sources(node):
+    """Nodes other than this one publishing our depth topic (e.g. the ZED wrapper), as /ns/name."""
+    me = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
+    infos = node.get_publishers_info_by_topic(TOPIC_ROOT + 'depth/depth_registered')
+    names = [f'{i.node_namespace.rstrip("/")}/{i.node_name}' for i in infos]
+    return [n for n in names if n != me]
 
 
 def main():
@@ -344,6 +360,13 @@ def main():
     node = None
     try:
         node = ZedUsb()
+        # Never mix CPU stereo depth with the ZED SDK's: give discovery a moment, then check.
+        time.sleep(2.0)
+        others = other_depth_sources(node)
+        if others:
+            node.get_logger().error(f'{", ".join(others)} already publishes depth; not starting a second '
+                                    'depth source (with the ZED wrapper running, use its depth: make jetson)')
+            return
         node.spin()
     except KeyboardInterrupt:
         pass

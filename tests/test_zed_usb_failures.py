@@ -3,6 +3,7 @@
 # or skipped. Runs against a scripted fake camera and a stand-in for rclpy, so no hardware or ROS is needed.
 import importlib
 import sys
+import types
 import urllib.error
 
 import numpy as np
@@ -196,7 +197,7 @@ def test_good_frame_publishes_rgb_depth_and_camera_info(zed, monkeypatch, tmp_pa
     node = make_node(zed, monkeypatch, Camera([stereo_frame()] * 3))
     assert node.step()
     assert set(published(node).values()) == {1}
-    depth = node.publishers_by_topic['~/depth/depth_registered'].sent[0]
+    depth = node.publishers_by_topic['/zed/zed_node/depth/depth_registered'].sent[0]
     assert depth.encoding == '32FC1' and (depth.height, depth.width) == (H, W)
 
 
@@ -210,7 +211,7 @@ def test_usb_disconnect_mid_run_reconnects(zed, monkeypatch, tmp_path):
     assert not node.step()  # still nothing -> reopen; second reopen gets the camera back
     assert 'Camera back on' in node.get_logger().text('info')
     assert node.step()
-    assert published(node)['~/rgb/color/rect/image'] == 2
+    assert published(node)['/zed/zed_node/rgb/color/rect/image'] == 2
     assert node.get_logger().text('warn').count('Camera read failed') == 1  # reported once, not per frame
 
 
@@ -220,7 +221,7 @@ def test_unplugged_camera_that_does_not_come_back_never_raises(zed, monkeypatch,
     node = make_node(zed, monkeypatch, camera, [('/dev/video0', '12345'), (None, None)])
     for _ in range(20):
         assert not node.step()
-    assert published(node)['~/rgb/color/rect/image'] == 0
+    assert published(node)['/zed/zed_node/rgb/color/rect/image'] == 0
 
 
 def test_read_that_raises_is_treated_as_a_failed_read(zed, monkeypatch, tmp_path):
@@ -271,3 +272,29 @@ def test_find_zed_reads_sysfs(zed, tmp_path):
 
 def test_find_zed_without_a_camera(zed, tmp_path):
     assert zed.find_zed(str(tmp_path)) == (None, None)
+
+
+class GraphNode:
+    """Just enough of a node for other_depth_sources: its name and who publishes the depth topic."""
+
+    def __init__(self, publishers):
+        self.publishers = publishers
+
+    def get_name(self):
+        return 'zed_usb'
+
+    def get_namespace(self):
+        return '/'
+
+    def get_publishers_info_by_topic(self, topic):
+        assert topic == '/zed/zed_node/depth/depth_registered'
+        return [types.SimpleNamespace(node_namespace=ns, node_name=name) for ns, name in self.publishers]
+
+
+@pytest.mark.parametrize('publishers, others', [
+    ([('/', 'zed_usb')], []),
+    ([('/', 'zed_usb'), ('/zed', 'zed_node')], ['/zed/zed_node']),
+], ids=['alone', 'with the ZED wrapper'])
+def test_a_second_depth_source_is_spotted(zed, publishers, others):
+    """The publisher must not run next to the ZED wrapper: two depth sources would be mixed."""
+    assert zed.other_depth_sources(GraphNode(publishers)) == others

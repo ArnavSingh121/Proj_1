@@ -67,7 +67,7 @@ ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
 	check test sim bridge rtabmap mavros save-map load-map map-monitor replay-flight zed-usb jetson-deps \
-	jetson-check jetson jetson-autostart
+	jetson-check jetson jetson-verify jetson-autostart
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -222,6 +222,9 @@ jetson-check: ## (Jetson) Report what is installed / missing (no sudo)
 
 jetson: ## (Jetson) Run ZED + RTAB-Map + MAVROS, e.g. make jetson ZED_MODEL=zed2i
 	ZED_MODEL=$(ZED_MODEL) ./jetson/run.sh
+
+jetson-verify: ## (Jetson) While `make jetson` runs: depth is the ZED SDK's and every bridge has data
+	source $(ROS_SETUP) && python3 ./jetson/verify.py
 
 jetson-autostart: ## (Jetson) Start mapping at every power-on (sudo), e.g. make jetson-autostart ZED_MODEL=zed2i
 	@[ -n "$(ZED_MODEL)" ] || { echo "usage: make jetson-autostart ZED_MODEL=zed2i"; exit 1; }

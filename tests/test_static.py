@@ -255,19 +255,22 @@ def test_zed_topic_root_is_the_same_in_jetson_and_usb_launch_files():
 def test_rtabmap_inputs_are_topics_the_zed_publishes(launch):
     """The USB publisher stands in for the ZED wrapper: RTAB-Map must find its topics in both setups.
 
-    The publisher runs as node 'zed_node' in namespace '/zed', so '~/x' becomes '/zed/zed_node/x'.
+    The publisher publishes under TOPIC_ROOT, the wrapper's topic root, from its own node 'zed_usb'.
     """
-    published = set(re.findall(r"create_publisher\(\w+, '~/([^']+)'", PUBLISHER.read_text()))
+    published = set(re.findall(r"create_publisher\(\w+, TOPIC_ROOT \+ '([^']+)'", PUBLISHER.read_text()))
     root = module_constants(launch)['ZED']
+    assert module_constants(PUBLISHER)['TOPIC_ROOT'] == root
     args = launch_arguments(launch, 'rgb_topic')
     for key in ('rgb_topic', 'depth_topic', 'camera_info_topic'):
         assert args[key].startswith(root)
         assert args[key][len(root):] in published, key
 
 
-def test_usb_launch_runs_the_publisher_as_zed_node_in_zed_namespace():
+def test_usb_publisher_keeps_its_own_node_name():
+    """Named 'zed_usb', not the wrapper's 'zed_node', so jetson/verify.py can tell which one makes the depth."""
     cmd = next(items for items in list_items(USB_LAUNCH, 'cmd') if 'python3' in items)
-    assert '__node:=zed_node' in cmd and '__ns:=/zed' in cmd
+    assert not any('__node:=' in str(item) or '__ns:=' in str(item) for item in cmd)
+    assert "super().__init__('zed_usb')" in PUBLISHER.read_text()
     assert "additional_env={'PYTHONNOUSERSITE': '1'}" in USB_LAUNCH.read_text()
 
 
