@@ -7,6 +7,7 @@
 #
 # Run as node 'zed_node' in namespace 'zed' (zed_usb_rtabmap.launch.py does this). If a NumPy 2 in
 # ~/.local breaks the system OpenCV, run with PYTHONNOUSERSITE=1.
+import array
 import configparser
 import glob
 import os
@@ -120,9 +121,10 @@ class ZedUsb(Node):
     def __init__(self):
         super().__init__('zed_node')
         self.declare_parameter('device', '')  # '' = first ZED found
-        # CPU depth keeps up with VGA at 15 fps (~60 ms/frame); HD720 has 4x the pixels.
+        # CPU depth takes ~60 ms/frame at VGA; HD720 has 4x the pixels.
         self.declare_parameter('resolution', 'VGA')  # VGA, HD720, HD1080, HD2K (USB 2 only carries VGA)
-        self.declare_parameter('fps', 15)
+        # Capture faster than depth runs (~60 ms/frame): at 15 fps every other frame was missed (7.5 Hz out).
+        self.declare_parameter('fps', 30)
         self.declare_parameter('flip', False)  # true if the camera is mounted upside down
         self.declare_parameter('min_depth', 0.3)
         self.declare_parameter('max_depth', 10.0)
@@ -285,13 +287,14 @@ class ZedUsb(Node):
         m.p = self.P.flatten().tolist()
         return m
 
-    def image(self, stamp, array, encoding):
+    def image(self, stamp, img, encoding):
         m = Image()
         m.header.stamp, m.header.frame_id = stamp, self.frame_id
-        m.height, m.width = array.shape[:2]
+        m.height, m.width = img.shape[:2]
         m.encoding = encoding
-        m.step = array.strides[0]
-        m.data = array.tobytes()
+        m.step = img.strides[0]
+        # array.array skips the per-byte check rclpy runs on bytes (~100 ms per frame at VGA).
+        m.data = array.array('B', img.tobytes())
         return m
 
     def depth(self, left, right):

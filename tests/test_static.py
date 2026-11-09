@@ -281,8 +281,9 @@ def test_rtabmap_frame_and_sync_settings():
     assert (sim['frame_id'], sim['approx_sync'], sim['use_sim_time']) == ('base_link', 'true', 'true')
     # The ZED (real or USB) stamps color and depth identically: exact sync, reliable QoS, wall time.
     for args in (jetson, usb):
-        assert (args['frame_id'], args['approx_sync'], args['qos'], args['use_sim_time']) == \
-            ('zed_camera_link', 'false', '1', 'false')
+        assert (args['frame_id'], args['approx_sync'], args['qos']) == ('zed_camera_link', 'false', '1')
+    assert jetson['use_sim_time'] == 'false'
+    assert usb['use_sim_time'] is UNEVALUATED  # launch argument: wall time unless replaying a bag
     assert sim['rgb_topic'] == '/uav/rgb/image' and sim['depth_topic'] == '/uav/depth/image'
     assert usb['visual_odometry'] == 'true'  # no IMU over plain USB
     assert jetson['visual_odometry'] is UNEVALUATED  # chosen at launch time by use_zed_odometry

@@ -5,6 +5,7 @@ import os
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
@@ -26,7 +27,17 @@ def generate_launch_description():
             description="'true' if the camera is upside down (images are turned and left/right swapped)"),
         DeclareLaunchArgument(
             'new_map', default_value='true',
-            description="'true' starts a fresh map; 'false' continues the one in ~/.ros/rtabmap.db"),
+            description="'true' starts a fresh map; 'false' continues the one in database_path"),
+        DeclareLaunchArgument(
+            'database_path', default_value='~/.ros/rtabmap.db', description='RTAB-Map map database'),
+        DeclareLaunchArgument(
+            'localization', default_value='false',
+            description="'true' only localizes in the saved map in database_path, without changing it"),
+        DeclareLaunchArgument(
+            'camera', default_value='true',
+            description="'false' runs RTAB-Map without the ZED, on topics replayed from a bag"),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false', description="'true' with a bag played with --clock"),
         DeclareLaunchArgument('rtabmap_viz', default_value='true', description='RTAB-Map viewer'),
     ]
 
@@ -38,6 +49,7 @@ def generate_launch_description():
         output='screen',
         # The publisher waits out camera problems itself; this restarts it if it ever dies anyway.
         respawn=True, respawn_delay=2.0,
+        condition=IfCondition(LaunchConfiguration('camera')),
     )
 
     # zed_camera_link -> left optical frame, as the ZED URDF places it (left lens 6 cm left of center).
@@ -53,6 +65,8 @@ def generate_launch_description():
         launch_arguments={
             'rtabmap_args': [PythonExpression(
                 ["'--delete_db_on_start' if '", new_map, "' == 'true' else ''"]), ' ' + SELF_FILTER],
+            'database_path': LaunchConfiguration('database_path'),
+            'localization': LaunchConfiguration('localization'),
             # Handheld camera: when tracking is lost, restart odometry right away instead of waiting
             # forever to re-match the last keyframe; RTAB-Map links the pieces by loop closure.
             'odom_args': ODOM_SELF_FILTER + ' --Odom/ResetCountdown 1',
@@ -64,7 +78,7 @@ def generate_launch_description():
             # Reliable: best-effort drops ~1 MB images whole once they exceed the socket buffer (212 KB).
             'qos': '1',
             'visual_odometry': 'true',
-            'use_sim_time': 'false',
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
             'rtabmap_viz': LaunchConfiguration('rtabmap_viz'),
         }.items(),
     )
