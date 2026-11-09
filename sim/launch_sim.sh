@@ -25,5 +25,8 @@ if [ "${NO_GCS:-false}" = true ]; then
 else
   export PX4_PARAM_NAV_DLL_ACT="${PX4_PARAM_NAV_DLL_ACT:-2}"
 fi
+# Manual yaw at most 60 deg/s (PX4's x500 default: 150). Full yaw stick at 150 saturates the motors and
+# the drone sinks, and fast turns make RTAB-Map's visual odometry lose track. A value you export is kept.
+export PX4_PARAM_MPC_MAN_Y_MAX="${PX4_PARAM_MPC_MAN_Y_MAX:-60}"
 # World file is worlds/default_warehouse.sdf; "warehouse" alone hangs at "Waiting for Gazebo world".
 PX4_GZ_WORLD="$WORLD" make px4_sitl gz_x500_depth

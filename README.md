@@ -90,6 +90,10 @@ Terminal 3 starts RTAB-Map (RGB-D SLAM with its own visual odometry) and its vie
 Fly the drone (QGroundControl, or `commander takeoff` in the PX4 shell) to build the map.
 PX4 refuses to arm until QGroundControl is connected; `make sim NO_GCS=true` lets `commander takeoff`
 work without it (sim only: it also turns off the return-home failsafe on GCS link loss).
+After a crash, `make reset-drone` puts the drone back upright at its start point, disarmed, without
+restarting anything (Gazebo's own reset button deletes the drone; then only restarting `make sim` helps).
+`make camera` turns Gazebo's follow camera around the drone from the same gamepad: D-pad left/right
+orbits, up/down raises/lowers it, RT/LT zoom in/out, Y returns to the start view (the sticks stay with QGroundControl).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)

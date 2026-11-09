@@ -67,7 +67,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
-	check test sim bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
+	check test sim reset-drone camera bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -187,6 +187,12 @@ test: ## Run the tests: config consistency, ZED USB publisher, scripts + Makefil
 
 sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1), e.g. make sim NO_GCS=true
 	NO_GCS=$(NO_GCS) ./sim/launch_sim.sh $(PX4_DIR)
+
+reset-drone: ## Put the drone back upright at its start point without restarting the sim (e.g. after a crash)
+	./sim/reset_drone.sh $(PX4_DIR)
+
+camera: ## Turn Gazebo's follow camera around the drone with the gamepad (D-pad, LT/RT, Y)
+	python3 sim/camera_orbit.py
 
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh

@@ -168,6 +168,74 @@ def test_launch_sim_stops_if_px4_is_missing(tmp_path, stubs):
     assert result.returncode != 0 and stubs.calls('make') == []
 
 
+@pytest.mark.parametrize('own, expected', [(None, '60'), ('150', '150')])
+def test_launch_sim_limits_manual_yaw_rate(tmp_path, stubs, own, expected):
+    """Full yaw stick at PX4's 150 deg/s made the drone sink and RTAB-Map lose track; a value you set is kept."""
+    stubs.add('make')
+    (tmp_path / 'PX4').mkdir()
+    env = stubs.env(**({'PX4_PARAM_MPC_MAN_Y_MAX': own} if own else {}))
+    if not own:
+        env.pop('PX4_PARAM_MPC_MAN_Y_MAX', None)
+    assert run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'PX4')], env=env).returncode == 0
+    assert stubs.calls('make')[0]['env']['PX4_PARAM_MPC_MAN_Y_MAX'] == expected
+
+
+# ---- sim/reset_drone.sh ----
+
+PX4_CLIENTS = ('px4-commander', 'px4-ekf2', 'px4-listener')
+
+
+def reset_drone(tmp_path, stubs, rtabmap=True, gz_reply='data: true', **env):
+    """Runs reset_drone.sh against a fake PX4 build whose client commands (px4-commander, ...) are stubs."""
+    stubs.add('gz', 'ros2', *PX4_CLIENTS)
+    bin_dir = tmp_path / 'PX4/build/px4_sitl_default/bin'
+    bin_dir.mkdir(parents=True)
+    for name in PX4_CLIENTS:
+        (bin_dir / name).symlink_to(stubs.bin / name)
+    services = '/rtabmap/rgbd_odometry/reset_odom\n' if rtabmap else '/other/service\n'
+    return run([str(REPO / 'sim/reset_drone.sh'), str(tmp_path / 'PX4')], env=stubs.env(
+        ROS_OVERLAY=stubs.overlay, STUB_GZ_STDOUT=gz_reply, STUB_ROS2_STDOUT=services,
+        STUB_PX4_LISTENER_STDOUT='    pre_flight_checks_pass: True\n', **env))
+
+
+@needs_ros_setup
+def test_reset_drone_disarms_moves_it_upright_to_the_spawn_point_and_restarts_the_estimator(tmp_path, stubs):
+    result = reset_drone(tmp_path, stubs)
+    assert result.returncode == 0, result.stderr
+    assert 'ready for takeoff' in result.stdout
+    assert [c['argv'] for c in stubs.calls('px4-commander')] == [['disarm', '-f']]
+    (gz,) = stubs.calls('gz')
+    assert gz['argv'][:3] == ['service', '-s', '/world/default_warehouse/set_pose']
+    request = gz['argv'][gz['argv'].index('--req') + 1]
+    # PX4 spawns x500_depth_0 at the world origin; upright = identity orientation.
+    assert 'name: "x500_depth_0"' in request and 'x: 0 y: 0' in request and 'orientation { w: 1 }' in request
+    assert [c['argv'] for c in stubs.calls('px4-ekf2')] == [['stop'], ['start']]
+    assert ['service', 'call', '/rtabmap/rgbd_odometry/reset_odom', 'std_srvs/srv/Empty'] in \
+        [c['argv'] for c in stubs.calls('ros2')]
+
+
+@needs_ros_setup
+def test_reset_drone_world_and_no_rtabmap(tmp_path, stubs):
+    result = reset_drone(tmp_path, stubs, rtabmap=False, WORLD='walls')
+    assert result.returncode == 0, result.stderr
+    assert stubs.calls('gz')[0]['argv'][2] == '/world/walls/set_pose'
+    assert all(c['argv'][:2] != ['service', 'call'] for c in stubs.calls('ros2'))
+
+
+@needs_ros_setup
+def test_reset_drone_stops_if_the_drone_cannot_be_moved(tmp_path, stubs):
+    """E.g. Gazebo's reset deleted the drone: then the estimator is left alone and the user is told why."""
+    result = reset_drone(tmp_path, stubs, gz_reply='data: false')
+    assert result.returncode == 1
+    assert 'restart the sim' in result.stderr
+    assert stubs.calls('px4-ekf2') == []
+
+
+def test_reset_drone_needs_a_px4_build(tmp_path):
+    result = run([str(REPO / 'sim/reset_drone.sh'), str(tmp_path / 'nope')])
+    assert result.returncode == 1 and 'make px4' in result.stderr
+
+
 # ---- sim/bridge.sh ----
 
 def bridge(stubs, **env):
@@ -459,6 +527,8 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['sim', 'PX4_DIR=/px4', 'NO_GCS=true'], 'NO_GCS=true ./sim/launch_sim.sh /px4'),
     (['models', 'PX4_DIR=/px4'], './sim/install_models.sh /px4'),
     (['bridge'], './sim/bridge.sh'),
+    (['reset-drone', 'PX4_DIR=/px4'], './sim/reset_drone.sh /px4'),
+    (['camera'], 'python3 sim/camera_orbit.py'),
     (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=0'),
     (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1'],
      './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1'),
