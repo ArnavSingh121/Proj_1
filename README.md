@@ -55,7 +55,7 @@ Our drone needs custom Gazebo models, in [`sim/models/`](sim/models):
 | Model | Change |
 |---|---|
 | `x500_depth` | Adds the OdometryPublisher plugin (ground-truth odometry, 3D) and a 3D lidar |
-| `OakD-Lite` | 640x480 RGB + depth, frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
+| `OakD-Lite` | 640x480 RGB + depth at 15 Hz (30 is more than Gazebo can render here), frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
 | `lidar_3d` | 3D lidar model (not in stock PX4) |
 | `depot` | Warehouse building, shelves and crates of the `default_warehouse` world (not in stock PX4; Open Robotics, from Gazebo Fuel) |
 | `person` | Standing person, placed 3 times in `default_warehouse` (not in stock PX4; Marina Kollmitz, from Gazebo Fuel) |
@@ -70,13 +70,17 @@ make models   # same as ./sim/install_models.sh ~/PX4-Autopilot
 
 ## Running the simulation
 
-Terminal 1 starts PX4 + Gazebo. The first start can take a minute or two.
+Terminal 1 starts PX4 + Gazebo. The first start can take a minute or two. On a laptop with an NVIDIA
+GPU (driver working, `nvidia-smi` runs) Gazebo renders on it; `GPU=integrated make sim` keeps the
+default GPU. Without that, a hybrid-graphics laptop renders on the integrated GPU and the sim crawls.
 
 ```bash
 make sim      # same as ./sim/launch_sim.sh ~/PX4-Autopilot
 ```
 
 Terminal 2 starts the Gazebo → ROS 2 bridge. Leave it running.
+`make bridge` and `make rtabmap` use [`sim/fastdds.xml`](sim/fastdds.xml), a Fast DDS profile with shared memory:
+with `ROS_LOCALHOST_ONLY=1` alone, the 1 MB camera images go over UDP and reach RTAB-Map at a few Hz.
 
 ```bash
 make bridge   # same as ./sim/bridge.sh
@@ -84,6 +88,8 @@ make bridge   # same as ./sim/bridge.sh
 
 Terminal 3 starts RTAB-Map (RGB-D SLAM with its own visual odometry) and its viewer.
 Fly the drone (QGroundControl, or `commander takeoff` in the PX4 shell) to build the map.
+PX4 refuses to arm until QGroundControl is connected; `make sim NO_GCS=true` lets `commander takeoff`
+work without it (sim only: it also turns off the return-home failsafe on GCS link loss).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)
@@ -96,6 +102,7 @@ Options (all can be combined):
 | `make rtabmap ODOMETRY=sim` | Use Gazebo's simulated odometry (`/uav/odom`) instead of RTAB-Map's visual odometry. It is ground truth, so use `visual` (default) when measuring localization accuracy |
 | `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
+| `make rtabmap RATE=1` | Update the map once a second instead of on every camera frame (default `0`): much lighter on the CPU, e.g. on battery |
 
 Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
 NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a

@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+import yaml
 
 from conftest import REPO, needs_ros_setup, run
 
@@ -127,6 +128,40 @@ def test_launch_sim_world_and_default_px4_dir(tmp_path, stubs):
     assert call['cwd'] == str(tmp_path / 'PX4-Autopilot') and call['env']['PX4_GZ_WORLD'] == 'walls'
 
 
+@pytest.mark.parametrize('nvidia_smi, gpu, offload', [
+    ('exit 0', '', True),             # working NVIDIA driver: render on it
+    ('exit 9', '', False),            # no NVIDIA GPU or driver: unchanged
+    ('exit 0', 'integrated', False),  # opted out
+])
+def test_launch_sim_renders_on_the_nvidia_gpu_only_when_one_works(tmp_path, stubs, nvidia_smi, gpu, offload):
+    stubs.add('make').add('nvidia-smi', script=nvidia_smi + '\n')
+    (tmp_path / 'PX4').mkdir()
+    env = {k: v for k, v in stubs.env(GPU=gpu).items() if not k.startswith(('__NV_', '__GLX_'))}
+    result = run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'PX4')], env=env)
+    assert result.returncode == 0, result.stderr
+    (call,) = stubs.calls('make')
+    expected = {'__NV_PRIME_RENDER_OFFLOAD': '1', '__GLX_VENDOR_LIBRARY_NAME': 'nvidia'} if offload else {}
+    assert {k: v for k, v in call['env'].items() if k.startswith(('__NV_', '__GLX_'))} == expected
+
+
+@pytest.mark.parametrize('extra, nav_dll_act', [
+    ({'NO_GCS': 'true'}, '0'),                                    # arm without QGroundControl
+    ({}, '2'),                                                    # undo an earlier NO_GCS run (PX4 saves params)
+    ({'NO_GCS': 'false', 'PX4_PARAM_NAV_DLL_ACT': '1'}, '1'),     # a value the user set themselves is kept
+])
+def test_launch_sim_no_gcs_option(tmp_path, stubs, extra, nav_dll_act):
+    stubs.add('make')
+    (tmp_path / 'PX4').mkdir()
+    env = stubs.env(**extra)
+    for name in ('NO_GCS', 'PX4_PARAM_NAV_DLL_ACT'):
+        if name not in extra:
+            env.pop(name, None)
+    result = run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'PX4')], env=env)
+    assert result.returncode == 0, result.stderr
+    (call,) = stubs.calls('make')
+    assert call['env']['PX4_PARAM_NAV_DLL_ACT'] == nav_dll_act
+
+
 def test_launch_sim_stops_if_px4_is_missing(tmp_path, stubs):
     stubs.add('make')
     result = run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'nope')], env=stubs.env())
@@ -136,21 +171,21 @@ def test_launch_sim_stops_if_px4_is_missing(tmp_path, stubs):
 # ---- sim/bridge.sh ----
 
 def bridge(stubs, **env):
+    """({gz_topic: (ros_type, direction, gz_type)}, {gz_topic: ros_topic}) from the config bridge.sh writes."""
     stubs.add('ros2')
+    env.setdefault('XDG_RUNTIME_DIR', str(stubs.log))
     result = run([str(REPO / 'sim/bridge.sh')], env=stubs.env(ROS_OVERLAY=stubs.overlay, **env))
     assert result.returncode == 0, result.stderr
     argv = ros2_call(stubs)['argv']
-    assert argv[:3] == ['run', 'ros_gz_bridge', 'parameter_bridge']
-    split = argv.index('--ros-args')
-    specs, ros_args = argv[3:split], argv[split + 1:]
-    assert ros_args[::2] == ['-r'] * (len(ros_args) // 2)
-    remaps = dict(r.split(':=') for r in ros_args[1::2])
-    # 'gz_topic@ros_type[gz_type': '[' bridges Gazebo -> ROS only.
-    bridges = {}
-    for spec in specs:
-        m = re.fullmatch(r'([^@]+)@([^\[\]@]+)([\[\]@])([^\[\]@]+)', spec)
-        assert m, spec
-        bridges[m.group(1)] = (m.group(2), m.group(3), m.group(4))
+    assert argv[:4] == ['run', 'ros_gz_bridge', 'parameter_bridge', '--ros-args']
+    assert argv[4] == '-p' and argv[5].startswith('config_file:=') and len(argv) == 6
+    entries = yaml.safe_load(Path(argv[5].split(':=', 1)[1]).read_text())
+    # Lazy: unused topics (the 10 MB /uav/points cloud) must not load the single-threaded bridge.
+    assert all(e['lazy'] is True for e in entries)
+    # '[' bridges Gazebo -> ROS only, as GZ_TO_ROS does.
+    bridges = {e['gz_topic_name']: (e['ros_type_name'], '[' if e['direction'] == 'GZ_TO_ROS' else '?',
+                                    e['gz_type_name']) for e in entries}
+    remaps = {e['gz_topic_name']: e['ros_topic_name'] for e in entries}
     return bridges, remaps
 
 
@@ -223,6 +258,38 @@ def test_launcher_runs_its_launch_file_by_absolute_path(stubs, tmp_path, script,
     result = run([str(REPO / script), *args], env=stubs.env(ROS_OVERLAY=stubs.overlay), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert ros2_call(stubs)['argv'] == ['launch', str(REPO / launch_file), *args]
+
+
+@needs_ros_setup
+@pytest.mark.parametrize('script', ['sim/bridge.sh', 'sim/rtabmap.sh'])
+@pytest.mark.parametrize('own_profile', [None, '/my/profile.xml'])
+def test_sim_scripts_use_the_shared_memory_dds_profile(stubs, tmp_path, script, own_profile):
+    """Both ends of the camera images (bridge and RTAB-Map) need the profile, or the images go over UDP
+    and reach RTAB-Map at a few Hz. A profile the user set is kept."""
+    stubs.add('ros2')
+    env = stubs.env(ROS_OVERLAY=stubs.overlay, XDG_RUNTIME_DIR=tmp_path)
+    env.pop('FASTRTPS_DEFAULT_PROFILES_FILE', None)
+    if own_profile:
+        env['FASTRTPS_DEFAULT_PROFILES_FILE'] = own_profile
+    result = run([str(REPO / script)], env=env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    expected = own_profile or str(REPO / 'sim/fastdds.xml')
+    assert ros2_call(stubs)['env']['FASTRTPS_DEFAULT_PROFILES_FILE'] == expected
+
+
+def test_fastdds_profile_is_the_default_and_uses_shared_memory_and_localhost_udp():
+    ns = {'d': 'http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles'}
+    root = ET.parse(REPO / 'sim/fastdds.xml').getroot()
+    transports = {t.findtext('d:transport_id', namespaces=ns): t for t in root.iterfind('.//d:transport_descriptor', ns)}
+    participant = root.find('d:participant', ns)
+    assert participant.get('is_default_profile') == 'true'
+    used = [t.text for t in participant.iterfind('.//d:userTransports/d:transport_id', ns)]
+    assert sorted(transports[t].findtext('d:type', namespaces=ns) for t in used) == ['SHM', 'UDPv4']
+    shm = next(transports[t] for t in used if transports[t].findtext('d:type', namespaces=ns) == 'SHM')
+    assert int(shm.findtext('d:segment_size', namespaces=ns)) >= 4 * 640 * 480 * 4  # several depth images
+    udp = next(transports[t] for t in used if transports[t].findtext('d:type', namespaces=ns) == 'UDPv4')
+    # Same reach as ROS_LOCALHOST_ONLY=1: nothing leaves the machine.
+    assert [a.text for a in udp.iterfind('.//d:address', ns)] == ['127.0.0.1']
 
 
 @needs_ros_setup
@@ -388,11 +455,13 @@ def test_not_jetson_guard(stubs, machine, ok):
 
 
 @pytest.mark.parametrize('args, expected', [
-    (['sim', 'PX4_DIR=/px4'], './sim/launch_sim.sh /px4'),
+    (['sim', 'PX4_DIR=/px4'], 'NO_GCS=false ./sim/launch_sim.sh /px4'),
+    (['sim', 'PX4_DIR=/px4', 'NO_GCS=true'], 'NO_GCS=true ./sim/launch_sim.sh /px4'),
     (['models', 'PX4_DIR=/px4'], './sim/install_models.sh /px4'),
     (['bridge'], './sim/bridge.sh'),
-    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true'),
-    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false'], './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false'),
+    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=0'),
+    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1'],
+     './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1'),
     (['save-map', 'OUT=/maps/w'],
      'source /opt/ros/humble/setup.bash && python3 tools/save_map.py --ros-args -p out:=/maps/w'),
     (['load-map', 'MAP=/maps/w.yaml'],

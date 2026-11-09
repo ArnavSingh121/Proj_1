@@ -6,29 +6,32 @@
 set -eo pipefail
 source /opt/ros/humble/setup.bash
 if [ -n "${ROS_OVERLAY:-}" ]; then source "$ROS_OVERLAY"; fi
+# Shared-memory transport for the camera images (see fastdds.xml); keeps a profile you set yourself.
+export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTRTPS_DEFAULT_PROFILES_FILE:-$(cd "$(dirname "$0")" && pwd)/fastdds.xml}"
 
 WORLD="${WORLD:-default_warehouse}"
 MODEL=x500_depth_0
 CAM=/world/$WORLD/model/$MODEL/link/camera_link/sensor/IMX214
 IMU=/world/$WORLD/model/$MODEL/link/base_link/sensor/imu_sensor/imu
+CONFIG="${XDG_RUNTIME_DIR:-/tmp}/proj1_bridge_$WORLD.yaml"
 
-ros2 run ros_gz_bridge parameter_bridge \
-  /depth_camera@sensor_msgs/msg/Image[gz.msgs.Image \
-  /depth_camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked \
-  /camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
-  $CAM/image@sensor_msgs/msg/Image[gz.msgs.Image \
-  $CAM/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
-  /lidar_points/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked \
-  /model/$MODEL/odometry_with_covariance@nav_msgs/msg/Odometry[gz.msgs.OdometryWithCovariance \
-  $IMU@sensor_msgs/msg/Imu[gz.msgs.IMU \
-  /world/$WORLD/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
-  --ros-args \
-  -r /depth_camera:=/uav/depth/image \
-  -r /depth_camera/points:=/uav/points \
-  -r /camera_info:=/uav/depth/camera_info \
-  -r $CAM/image:=/uav/rgb/image \
-  -r $CAM/camera_info:=/uav/rgb/camera_info \
-  -r /lidar_points/points:=/uav/lidar/points \
-  -r /model/$MODEL/odometry_with_covariance:=/uav/odom \
-  -r $IMU:=/uav/imu \
-  -r /world/$WORLD/clock:=/clock
+# Every topic is lazy: converted only while something subscribes to it. The bridge converts on a single
+# thread, and converting the unused 640x480 /uav/points cloud (~10 MB a message) took most of a core.
+# Lazy is only honored per topic in a config file (lazy:=true on the command line is ignored by this
+# bridge build).
+bridge() {  # gz_topic ros_topic ros_type gz_type
+  printf -- '- gz_topic_name: "%s"\n  ros_topic_name: "%s"\n  ros_type_name: "%s"\n  gz_type_name: "%s"\n  direction: GZ_TO_ROS\n  lazy: true\n' "$@"
+}
+{
+  bridge /depth_camera /uav/depth/image sensor_msgs/msg/Image gz.msgs.Image
+  bridge /depth_camera/points /uav/points sensor_msgs/msg/PointCloud2 gz.msgs.PointCloudPacked
+  bridge /camera_info /uav/depth/camera_info sensor_msgs/msg/CameraInfo gz.msgs.CameraInfo
+  bridge "$CAM/image" /uav/rgb/image sensor_msgs/msg/Image gz.msgs.Image
+  bridge "$CAM/camera_info" /uav/rgb/camera_info sensor_msgs/msg/CameraInfo gz.msgs.CameraInfo
+  bridge /lidar_points/points /uav/lidar/points sensor_msgs/msg/PointCloud2 gz.msgs.PointCloudPacked
+  bridge "/model/$MODEL/odometry_with_covariance" /uav/odom nav_msgs/msg/Odometry gz.msgs.OdometryWithCovariance
+  bridge "$IMU" /uav/imu sensor_msgs/msg/Imu gz.msgs.IMU
+  bridge "/world/$WORLD/clock" /clock rosgraph_msgs/msg/Clock gz.msgs.Clock
+} > "$CONFIG"
+
+ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:="$CONFIG"

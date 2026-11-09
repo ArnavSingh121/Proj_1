@@ -20,12 +20,16 @@ QGC_URL  ?= https://github.com/mavlink/qgroundcontrol/releases/download/v5.0.8/Q
 QGC_APP  ?= $(HOME)/QGroundControl-v5.0.8-x86_64.AppImage
 # ZED camera model on the drone, for `make jetson` (zed, zedm, zed2, zed2i, zedx, zedxm, ...)
 ZED_MODEL ?=
+# `make sim`: true lets PX4 arm without QGroundControl (pxh> commander takeoff)
+NO_GCS ?= false
 # `make zed-usb`: true if the ZED is upside down
 FLIP ?= false
 # `make rtabmap`: odometry source (visual | sim), simulated 3D lidar (true | false), fresh map or reload
 ODOMETRY ?= visual
 LIDAR    ?= false
 NEW_MAP  ?= true
+# `make rtabmap`: map update rate in Hz, 0 = every camera frame (1 eases the CPU on battery)
+RATE     ?= 0
 # `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml
@@ -181,14 +185,14 @@ test: ## Run the tests: config consistency, ZED USB publisher, scripts + Makefil
 	@if [ -f $(ROS_SETUP) ]; then source $(ROS_SETUP); fi; \
 	PYTHONNOUSERSITE=1 python3 -m pytest tests $(PYTEST_ARGS)
 
-sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1)
-	./sim/launch_sim.sh $(PX4_DIR)
+sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1), e.g. make sim NO_GCS=true
+	NO_GCS=$(NO_GCS) ./sim/launch_sim.sh $(PX4_DIR)
 
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh
 
-rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false
-	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP)
+rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1
+	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE)
 
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
