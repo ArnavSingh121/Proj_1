@@ -11,8 +11,9 @@ into ROS 2. On the real drone, a Jetson runs the same mapping with a Stereolabs 
 | [`sim/`](sim) | Simulation: custom drone models, launch, bridge and RTAB-Map scripts |
 | [`jetson/`](jetson) | Real drone: install script and launch files for the Jetson + ZED |
 | [`zed_usb/`](zed_usb) | The real ZED on a laptop without an NVIDIA GPU (CPU depth, same topics as on the drone) |
-| [`tools/`](tools) | Save, reload and monitor the occupancy map (works with all three setups) |
+| [`tools/`](tools) | Flight recorder and replay; save, reload and monitor the occupancy map (works with all three setups) |
 | [`tests/`](tests) | Test suite (`make test`), no simulator or camera needed |
+| [`laptop/`](laptop) | One-command scripts for the whole stack on a laptop, and the demo guide |
 | [`Makefile`](Makefile) | One-command install and run targets for both (`make help`) |
 
 ## Environment
@@ -54,7 +55,7 @@ Our drone needs custom Gazebo models, in [`sim/models/`](sim/models):
 
 | Model | Change |
 |---|---|
-| `x500_depth` | Adds the OdometryPublisher plugin (ground-truth odometry, 3D) and a 3D lidar |
+| `x500_depth` | Adds the OdometryPublisher plugin (ground-truth odometry, 3D) and a 3D lidar. The odometry goes to `/ground_truth/odometry_with_covariance`: on its default topic PX4 would read it as external vision, i.e. be handed the true position |
 | `OakD-Lite` | 640x480 RGB + depth, frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
 | `lidar_3d` | 3D lidar model (not in stock PX4) |
 | `depot` | Warehouse building, shelves and crates of the `default_warehouse` world (not in stock PX4; Open Robotics, from Gazebo Fuel) |
@@ -231,11 +232,20 @@ make zed-usb FLIP=true    # camera upside down (images turned, left/right swappe
 ```
 
 - Depth is classic stereo matching, not the SDK's neural depth: expect holes on plain walls/ceilings.
-- VGA (672x376) at 15 fps: what the CPU depth keeps up with. No IMU (that needs the SDK).
+- VGA (672x376), about 30 Hz out of the publisher and 15 Hz into RTAB-Map. No IMU (that needs the SDK).
+- The publisher's node is `zed_usb` (the wrapper's is `/zed/zed_node`), with the wrapper's topics. It
+  refuses to start if the real ZED wrapper already publishes depth, so the two never mix.
 - If the camera keeps disconnecting every few seconds while idle, USB autosuspend is the cause
   (it is stable while streaming). Disable it for Stereolabs devices once:
   `echo 'ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2b03", ATTR{power/control}="on"' | sudo tee /etc/udev/rules.d/99-zed-no-autosuspend.rules && sudo udevadm control --reload`
 - Only VGA over a USB 2 link: for USB 3, use a USB 3 port and try flipping the USB-C plug.
+- Mapping a place and saving it: [`laptop/map.sh`](laptop/map.sh) `<name>` maps into `maps/<name>.db`
+  (running it again continues the same map) and records the camera to a bag; `laptop/save_map.sh <name>`,
+  run before stopping, writes `maps/<name>_<time>/` (database, `map.pgm` + `map.yaml`, `cloud.ply`,
+  `poses.txt`); `laptop/replay_map.sh <name>` replays the bag. `maps/` is not committed.
+- Walking tips: hold the camera level and upright at the start (no IMU, so that defines "up"), move
+  slowly, avoid pointing at blank walls, and walk back over the route at least once: when tracking is
+  lost the map restarts in a new piece, and pieces join where you revisit a place.
 - Camera problems never stop the publisher: it waits for an unplugged camera, reconnects after a USB
   reset, skips garbled frames, and retries the calibration download until the network is back.
   The launch file also restarts it if it ever exits.
@@ -264,6 +274,7 @@ git clone https://github.com/ArnavSingh121/Proj_1.git && cd Proj_1
 make jetson-check                 # what is installed / missing (changes nothing)
 make jetson-deps                  # install everything (asks for sudo; the ZED wrapper build takes a while)
 make jetson ZED_MODEL=zed2i       # use your model: zed, zedm, zed2, zed2i, zedx, zedxm, ...
+make jetson-verify                # while it runs: depth comes from the ZED SDK and every bridge has data
 ```
 
 - The ZED SDK keeps its AI module: in SDK 5 every depth mode is neural (`NEURAL_LIGHT` is used).
@@ -277,6 +288,13 @@ make jetson ZED_MODEL=zed2i       # use your model: zed, zedm, zed2, zed2i, zedx
   `Grid/RangeMin` / `Vis/MinDepth`), so the drone's own props and legs don't end up in the map.
 - To watch the map from a laptop, use the same `ROS_DOMAIN_ID` on both and run `rtabmap_viz` there,
   or start with `rtabmap_viz:=true` if the Jetson has a screen.
+
+## Work in progress
+
+| File | State |
+|---|---|
+| [`jetson/verify.py`](jetson/verify.py) (`make jetson-verify`) | Not yet run on a Jetson |
+| [`tools/px4_vision_bridge.py`](tools/px4_vision_bridge.py) | Sends RTAB-Map's pose to PX4 as vision. Tried in the sim only; the PX4 settings file it needs doesn't exist yet |
 
 ## Tests
 
