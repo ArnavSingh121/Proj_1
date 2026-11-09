@@ -1,7 +1,9 @@
 # Gamepad control of the Gazebo follow camera (sim/camera_orbit.py), without a gamepad or Gazebo.
 import math
 
-from camera_orbit import EVENT, JS_EVENT_AXIS, JS_EVENT_BUTTON, JS_EVENT_INIT, Orbit, Pad, pressed
+import numpy
+
+from camera_orbit import EVENT, JS_EVENT_AXIS, JS_EVENT_BUTTON, JS_EVENT_INIT, Orbit, Pad, pressed, to_bgr
 
 RELEASED, FULL = -32767, 32767
 
@@ -80,10 +82,19 @@ def test_pad_reads_dpad_and_triggers_and_ignores_the_flying_sticks():
     assert (pad.zoom_in, pad.zoom_out) == (0.0, 1.0)
 
 
-def test_y_resets_once_per_press_and_initial_state_is_not_a_press():
+def test_buttons_report_each_new_press_once_and_initial_state_is_not_a_press():
     pad = Pad()
-    assert pad.apply(event(JS_EVENT_BUTTON | JS_EVENT_INIT, 3, 0)) is False  # state on open
-    assert pad.apply(event(JS_EVENT_BUTTON, 3, 1)) is True
-    assert pad.apply(event(JS_EVENT_BUTTON, 3, 1)) is False  # repeat while held
-    assert pad.apply(event(JS_EVENT_BUTTON, 3, 0)) is False
-    assert pad.apply(event(JS_EVENT_BUTTON, 3, 1)) is True
+    assert pad.apply(event(JS_EVENT_BUTTON | JS_EVENT_INIT, 3, 1)) is None  # held when the pad was opened
+    assert pad.apply(event(JS_EVENT_BUTTON, 3, 0)) is None
+    assert pad.apply(event(JS_EVENT_BUTTON, 3, 1)) == 3  # Y
+    assert pad.apply(event(JS_EVENT_BUTTON, 3, 1)) is None  # repeat while held
+    assert pad.apply(event(JS_EVENT_BUTTON, 3, 0)) is None
+    assert pad.apply(event(JS_EVENT_BUTTON, 2, 1)) == 2  # X
+    assert pad.apply(event(JS_EVENT_AXIS, 6, FULL)) is None
+
+
+def test_gazebo_rgb_image_becomes_opencv_bgr():
+    # 2x1 image: a red pixel then a blue one, as Gazebo sends RGB_INT8.
+    bgr = to_bgr(2, 1, bytes([255, 0, 0, 0, 0, 255]))
+    assert bgr.shape == (1, 2, 3)
+    assert numpy.array_equal(bgr[0, 0], [0, 0, 255]) and numpy.array_equal(bgr[0, 1], [255, 0, 0])

@@ -191,8 +191,8 @@ sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1), e.g. make sim NO_G
 reset-drone: ## Put the drone back upright at its start point without restarting the sim (e.g. after a crash)
 	./sim/reset_drone.sh $(PX4_DIR)
 
-camera: ## Turn Gazebo's follow camera around the drone with the gamepad (D-pad, LT/RT, Y)
-	python3 sim/camera_orbit.py
+camera: ## Gamepad camera: orbit Gazebo's follow view (D-pad, LT/RT, Y), first person on X
+	PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py
 
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh

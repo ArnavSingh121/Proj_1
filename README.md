@@ -93,7 +93,8 @@ work without it (sim only: it also turns off the return-home failsafe on GCS lin
 After a crash, `make reset-drone` puts the drone back upright at its start point, disarmed, without
 restarting anything (Gazebo's own reset button deletes the drone; then only restarting `make sim` helps).
 `make camera` turns Gazebo's follow camera around the drone from the same gamepad: D-pad left/right
-orbits, up/down raises/lowers it, RT/LT zoom in/out, Y returns to the start view (the sticks stay with QGroundControl).
+orbits, up/down raises/lowers it, RT/LT zoom in/out, Y returns to the start view, X opens/closes a
+first-person window with the drone's RGB camera (the sticks stay with QGroundControl).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)

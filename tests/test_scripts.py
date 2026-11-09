@@ -528,7 +528,7 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['models', 'PX4_DIR=/px4'], './sim/install_models.sh /px4'),
     (['bridge'], './sim/bridge.sh'),
     (['reset-drone', 'PX4_DIR=/px4'], './sim/reset_drone.sh /px4'),
-    (['camera'], 'python3 sim/camera_orbit.py'),
+    (['camera'], 'PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py'),
     (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=0'),
     (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1'],
      './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1'),

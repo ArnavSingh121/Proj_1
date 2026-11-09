@@ -3,9 +3,12 @@
 # QGroundControl uses the two sticks; this only reads inputs QGroundControl leaves free:
 #   D-pad left/right  orbit around the drone        D-pad up/down  camera higher / lower
 #   RT / LT           zoom in / out (press harder: faster)    Y      back to the start view
+#   X                 first-person view on/off: a window with the drone's own RGB camera, the images
+#                     RTAB-Map gets (Gazebo's view camera cannot look forward from the drone).
+#                     Esc or Q in that window also closes it.
 # Both read the same /dev/input/js* device, which Linux allows. Moves the camera only: the drone,
 # its sensors and RTAB-Map are not affected.
-# Usage: python3 sim/camera_orbit.py [--device /dev/input/js0] [--model x500_depth_0]
+# Usage: python3 sim/camera_orbit.py [--device /dev/input/js0] [--model x500_depth_0] [--world W]
 import argparse
 import math
 import os
@@ -18,11 +21,11 @@ import time
 EVENT = struct.Struct('IhBB')
 JS_EVENT_BUTTON, JS_EVENT_AXIS, JS_EVENT_INIT = 0x01, 0x02, 0x80
 # Xbox-layout pads (xpad driver): axes 6/7 are the D-pad, 2/5 the triggers LT/RT (-32767 released,
-# 32767 fully pressed), button 3 is Y. QGroundControl maps the triggers to gimbal pitch/yaw, which the
+# 32767 fully pressed), buttons 2/3 are X/Y. QGroundControl maps the triggers to gimbal pitch/yaw, which the
 # x500 does not have, so they are free here.
 HAT_X, HAT_Y = 6, 7
 TRIGGER_LT, TRIGGER_RT = 2, 5
-BUTTON_Y = 3
+BUTTON_X, BUTTON_Y = 2, 3
 
 ORBIT_DEG_PER_S = 60.0
 ZOOM_PER_S = 1.0        # trigger fully pressed: distance changes by e (x2.7) per second
@@ -74,8 +77,9 @@ class Pad:
         self.buttons = set()
 
     def apply(self, data):
-        """Applies one js_event. Returns True when Y was just pressed."""
+        """Applies one js_event. Returns the button number when a button was just pressed, else None."""
         _, value, kind, number = EVENT.unpack(data)
+        initial = bool(kind & JS_EVENT_INIT)  # state reported on open, not a press
         kind &= ~JS_EVENT_INIT
         if kind == JS_EVENT_AXIS and number == HAT_X:
             self.hat_x = sign(value)
@@ -86,19 +90,66 @@ class Pad:
         elif kind == JS_EVENT_AXIS and number == TRIGGER_LT:
             self.zoom_out = pressed(value)
         elif kind == JS_EVENT_BUTTON:
-            new_press = number not in self.buttons and value
+            new_press = number not in self.buttons and value and not initial
             (self.buttons.add if value else self.buttons.discard)(number)
-            return bool(new_press and number == BUTTON_Y)
-        return False
+            return number if new_press else None
+        return None
 
     def moving(self):
         return bool(self.hat_x or self.hat_y or self.zoom_in or self.zoom_out)
+
+
+def to_bgr(width, height, data):
+    """Gazebo RGB_INT8 image bytes as the BGR array OpenCV shows."""
+    import numpy
+    return numpy.frombuffer(data, numpy.uint8).reshape(height, width, 3)[:, :, ::-1]
+
+
+class FirstPerson:
+    """Window with the drone's RGB camera. Subscribed only while open, so it costs nothing when off."""
+    WINDOW = 'Drone camera (X or Esc: close)'
+
+    def __init__(self, node, topic):
+        from gz.msgs10.image_pb2 import Image
+        self.node, self.topic, self.image_type = node, topic, Image
+        self.frame = None
+        self.on = False
+
+    def _receive(self, msg):
+        self.frame = (msg.width, msg.height, msg.data)
+
+    def toggle(self):
+        import cv2
+        if self.on:
+            self.node.unsubscribe(self.topic)
+            cv2.destroyWindow(self.WINDOW)
+            cv2.waitKey(1)
+            self.on, self.frame = False, None
+        else:
+            self.node.subscribe(self.image_type, self.topic, self._receive)
+            cv2.namedWindow(self.WINDOW, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.WINDOW, 960, 720)
+            self.on = True
+
+    def show(self):
+        """Draws the newest frame. Esc or Q in the window closes it, like X on the pad."""
+        import cv2
+        if not self.on:
+            return
+        frame, self.frame = self.frame, None
+        if frame:
+            cv2.imshow(self.WINDOW, to_bgr(*frame))
+        # This OpenCV build does not report the window's own close button (the window comes back with
+        # the next frame), so Esc or Q in the window closes it too.
+        if (cv2.waitKey(1) & 0xFF) in (27, ord('q')):
+            self.toggle()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', default='/dev/input/js0')
     parser.add_argument('--model', default='x500_depth_0')
+    parser.add_argument('--world', default=os.environ.get('WORLD', 'default_warehouse'))
     args = parser.parse_args()
 
     from gz.msgs10.boolean_pb2 import Boolean
@@ -118,7 +169,9 @@ def main():
     if not node.request('/gui/follow', StringMsg(data=args.model), StringMsg, Boolean, 3000)[0]:
         sys.exit('No Gazebo window to move the camera of. Is the sim running (make sim)?')
     send(orbit.offset())
-    print('D-pad: orbit and height, RT/LT: zoom in/out, Y: start view. Ctrl+C to stop.')
+    first_person = FirstPerson(
+        node, f'/world/{args.world}/model/{args.model}/link/camera_link/sensor/IMX214/image')
+    print('D-pad: orbit and height, RT/LT: zoom in/out, Y: start view, X: first person. Ctrl+C to stop.')
 
     fd, pad, last = None, Pad(), time.monotonic()
     while True:
@@ -135,9 +188,12 @@ def main():
                 data = os.read(fd, EVENT.size)
                 if len(data) < EVENT.size:
                     break
-                if pad.apply(data):
+                button = pad.apply(data)
+                if button == BUTTON_Y:
                     orbit.reset()
                     send(orbit.offset())
+                elif button == BUTTON_X:
+                    first_person.toggle()
         except BlockingIOError:
             pass
         except OSError:
@@ -149,6 +205,7 @@ def main():
         if pad.moving():
             orbit.step(pad.hat_x, pad.hat_y, pad.zoom_in, pad.zoom_out, now - last)
             send(orbit.offset())
+        first_person.show()
         last = now
 
 
