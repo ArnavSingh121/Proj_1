@@ -11,6 +11,7 @@ WORLD="${WORLD:-default_warehouse}"
 MODEL=x500_depth_0
 CAM=/world/$WORLD/model/$MODEL/link/camera_link/sensor/IMX214
 IMU=/world/$WORLD/model/$MODEL/link/base_link/sensor/imu_sensor/imu
+GT=/ground_truth/odometry_with_covariance  # set in sim/models/x500_depth (kept away from PX4)
 
 ros2 run ros_gz_bridge parameter_bridge \
   /depth_camera@sensor_msgs/msg/Image[gz.msgs.Image \
@@ -19,7 +20,7 @@ ros2 run ros_gz_bridge parameter_bridge \
   $CAM/image@sensor_msgs/msg/Image[gz.msgs.Image \
   $CAM/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
   /lidar_points/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked \
-  /model/$MODEL/odometry_with_covariance@nav_msgs/msg/Odometry[gz.msgs.OdometryWithCovariance \
+  $GT@nav_msgs/msg/Odometry[gz.msgs.OdometryWithCovariance \
   $IMU@sensor_msgs/msg/Imu[gz.msgs.IMU \
   /world/$WORLD/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
   --ros-args \
@@ -29,6 +30,6 @@ ros2 run ros_gz_bridge parameter_bridge \
   -r $CAM/image:=/uav/rgb/image \
   -r $CAM/camera_info:=/uav/rgb/camera_info \
   -r /lidar_points/points:=/uav/lidar/points \
-  -r /model/$MODEL/odometry_with_covariance:=/uav/odom \
+  -r $GT:=/uav/odom \
   -r $IMU:=/uav/imu \
   -r /world/$WORLD/clock:=/clock

@@ -198,10 +198,13 @@ def test_bridge_gazebo_topics_match_the_world_and_the_models(stubs, world):
     camera_link = oakd.find('.//link').get('name')
     assert gz['/uav/rgb/image'] == f'/world/{world}/model/{model}/link/{camera_link}/sensor/{rgb_sensor.get("name")}/image'
     assert gz['/uav/rgb/camera_info'] == gz['/uav/rgb/image'].replace('/image', '/camera_info')
-    # The depth sensor publishes on its <topic>; OdometryPublisher on /model/<name>/odometry_with_covariance.
+    # The depth sensor publishes on its <topic>; OdometryPublisher on the topic set in x500_depth, away from
+    # its default /model/<name>/odometry_with_covariance, which PX4 would read as external vision.
     assert gz['/uav/depth/image'] == '/' + oakd.find(".//sensor[@type='depth_camera']/topic").text
     assert gz['/uav/points'] == gz['/uav/depth/image'] + '/points'
-    assert gz['/uav/odom'] == f'/model/{model}/odometry_with_covariance'
+    x500 = ET.parse(REPO / 'sim/models/x500_depth/model.sdf').getroot()
+    assert gz['/uav/odom'] == x500.find('.//plugin/odom_covariance_topic').text
+    assert gz['/uav/odom'] != f'/model/{model}/odometry_with_covariance'
     assert gz['/uav/imu'] == f'/world/{world}/model/{model}/link/base_link/sensor/imu_sensor/imu'
     assert gz['/clock'] == f'/world/{world}/clock'
     # gpu_lidar publishes a LaserScan on <topic> and the 3D cloud on <topic>/points.
