@@ -97,6 +97,14 @@ Options (all can be combined):
 | `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
 
+Terminal 4 starts MAVROS, which links ROS 2 to PX4. The flight recorder (below) needs it to see the drone
+arm and disarm. It runs on sim time ([`sim/mavros.launch.py`](sim/mavros.launch.py)), because otherwise its
+time sync with PX4 keeps resetting while the sim runs slower than real time.
+
+```bash
+make mavros
+```
+
 Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
 NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a
 warning) instead of being passed on, and it warns when odometry stops arriving and when it resumes.
@@ -115,6 +123,41 @@ The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
 (drop `use_sim_time`).
+
+### Every flight is recorded, with its map
+
+Nobody has to start or save anything. `make rtabmap` and `make jetson` also run
+[`tools/flight_recorder.py`](tools/flight_recorder.py), which follows PX4's armed state:
+
+| When | What happens |
+|---|---|
+| Arm | New folder `~/flight_recordings/<date>_<time>/`; a ros bag starts recording; the map restarts at the takeoff point |
+| Flying | The 2D map is written to the folder every 30 s, so a crash still leaves a map |
+| Disarm | The bag is closed, the full map is saved and `~/flight_recordings/latest` points to the folder |
+
+Each folder holds:
+
+| File | What |
+|---|---|
+| `bag/` | The recording: camera, IMU, odometry and our outputs (`RECORD_TOPICS` in the launch files) |
+| `map.pgm` + `map.yaml` | 2D occupancy map (ROS `map_server` format) |
+| `cloud.ply` | 3D point cloud (MeshLab, CloudCompare) |
+| `poses.txt` | The path flown |
+| `rtabmap.db` | The full RTAB-Map map (`rtabmap-databaseViewer`) |
+| `flight.json` | Status, start and end time, map size, recording length and size |
+
+```bash
+make load-map MAP=~/flight_recordings/latest/map.yaml   # serve the newest map on /map
+make replay-flight                                      # replay the newest flight through RTAB-Map
+make replay-flight FLIGHT=2026-11-10_14-03-22 SPEED=2   # or a given one, faster
+```
+
+Replaying needs no sim, drone or camera and maps into `<flight>/replay.db`, never changing the recorded
+map. It replays drone flights on a laptop too. Arming without moving keeps its folder but leaves `latest`
+alone. To turn recording off: `./sim/rtabmap.sh flight_recorder:=false`. A simulated camera records
+about 40 MB/s, so keep an eye on disk space.
+
+On the Jetson, `make jetson-autostart ZED_MODEL=zed2i` starts everything at power-on.
 
 ### Worlds
 

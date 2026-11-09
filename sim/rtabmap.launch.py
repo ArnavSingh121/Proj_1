@@ -25,6 +25,11 @@ SELF_FILTER = '--Grid/RangeMin 0.3 ' + ODOM_SELF_FILTER
 # When visual odometry loses track (blank wall, depth dropout), restart it right away instead of waiting
 # forever to re-match the last keyframe; RTAB-Map links the pieces back together by loop closure.
 ODOM_RECOVERY = '--Odom/ResetCountdown 1'
+# What tools/flight_recorder.py records from arm to disarm: the camera, IMU and simulated odometry with the
+# sim clock (enough to replay a flight through RTAB-Map: tools/replay_flight.sh), and our outputs.
+RECORD_TOPICS = ['/uav/rgb/image', '/uav/rgb/camera_info', '/uav/depth/image', '/uav/depth/camera_info',
+                 '/uav/imu', '/uav/odom', '/clock', '/tf', '/tf_static', '/rtabmap/odom', '/rtabmap/mapPath',
+                 '/mavros/local_position/pose']
 
 
 def rtabmap_and_odometry(context):
@@ -74,6 +79,15 @@ def rtabmap_and_odometry(context):
     )
 
     actions = [rtabmap, odom_relay]
+    if arg('flight_recorder') == 'true':
+        topics = RECORD_TOPICS + ([LIDAR_TOPIC] if lidar else [])
+        actions.append(ExecuteProcess(
+            cmd=['python3', os.path.join(HERE, '..', 'tools', 'flight_recorder.py'), '--ros-args',
+                 '-p', 'use_sim_time:=true', '-p', f"database:={arg('database_path')}",
+                 '-p', 'topics:=' + ' '.join(topics)],
+            output='screen',
+            respawn=True, respawn_delay=1.0,
+        ))
     if lidar:
         actions.append(Node(
             package='tf2_ros', executable='static_transform_publisher',
@@ -99,6 +113,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'database_path', default_value='~/.ros/rtabmap.db', description='RTAB-Map map database'),
         DeclareLaunchArgument('rtabmap_viz', default_value='true', description='RTAB-Map viewer'),
+        DeclareLaunchArgument(
+            'flight_recorder', default_value='true',
+            description="'true' records every flight, with its map, to ~/flight_recordings "
+                        "(tools/flight_recorder.py)"),
     ]
 
     # base_link -> camera_optical_frame (z forward, x right, y down), the frame the bridged images carry.

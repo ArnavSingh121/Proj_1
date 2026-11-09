@@ -481,3 +481,66 @@ def test_check_spots_outdated_models_in_px4(stubs, tmp_path, model_file):
 def test_check_warns_about_the_fortress_bridge(stubs, tmp_path):
     result = check(stubs, tmp_path, installed='ros-humble-ros-gz-bridge', PX4_DIR=tmp_path)
     assert 'WARNING  ros-humble-ros-gz-bridge (Fortress) is installed' in result.stdout
+
+
+# ---- tools/replay_flight.sh ----
+
+# The stub logs each call and keeps `ros2 launch` running for a moment, as RTAB-Map would, so the player
+# (started in the background) gets to run before the script ends.
+REPLAY_STUB = 'echo "$*" >> "$(dirname "$0")/../log/ros2.txt"\nif [ "$1" = launch ]; then sleep 1; fi\n'
+
+
+def recorded_flight(tmp_path, topic):
+    folder = tmp_path / 'flight_recordings' / '2026-11-10_14-03-22'
+    (folder / 'bag').mkdir(parents=True)
+    (folder / 'bag' / 'metadata.yaml').write_text(
+        'rosbag2_bagfile_information:\n  topics_with_message_count:\n'
+        f'    - topic_metadata:\n        name: {topic}\n')
+    return folder.resolve()
+
+
+def replay(stubs, tmp_path, *args, sim_running=False):
+    stubs.add('ros2', script=REPLAY_STUB).add('pgrep', script='exit 0\n' if sim_running else 'exit 1\n')
+    env = stubs.env(ROS_OVERLAY=stubs.overlay, FLIGHT_RECORDINGS=tmp_path / 'flight_recordings', REPLAY_DELAY=0)
+    return run([str(REPO / 'tools/replay_flight.sh'), *args], env=env)
+
+
+@needs_ros_setup
+@pytest.mark.parametrize('topic, launch, launch_args, clock', [
+    ('/uav/rgb/image', 'sim/rtabmap.launch.py', ['flight_recorder:=false'], []),
+    ('/zed/zed_node/rgb/color/rect/image', 'zed_usb/zed_usb_rtabmap.launch.py',
+     ['camera:=false', 'use_sim_time:=true'], ['--clock', '100']),
+], ids=['simulated flight', 'drone flight'])
+def test_replay_flight_uses_the_launch_file_and_topics_of_the_recording(stubs, tmp_path, topic, launch,
+                                                                       launch_args, clock):
+    folder = recorded_flight(tmp_path, topic)
+    result = replay(stubs, tmp_path, folder.name, '2')
+    assert result.returncode == 0, result.stderr
+    calls = (stubs.log / 'ros2.txt').read_text().splitlines()
+    # Never into the recorded map: a fresh replay.db next to it. A simulated replay must not record itself.
+    assert f'launch {REPO / launch} {" ".join(launch_args)} new_map:=true database_path:={folder}/replay.db' in calls
+    play = next(c for c in calls if c.startswith('bag play'))
+    assert play.startswith(f'bag play {folder}/bag --topics ')
+    assert topic in play
+    assert play.endswith(' '.join(clock + ['--rate', '2', '--disable-keyboard-controls']))
+
+
+@needs_ros_setup
+def test_replay_flight_defaults_to_the_latest_flight(stubs, tmp_path):
+    folder = recorded_flight(tmp_path, '/uav/rgb/image')
+    (folder.parent / 'latest').symlink_to(folder.name)
+    assert replay(stubs, tmp_path).returncode == 0
+    assert f'database_path:={folder}/replay.db' in (stubs.log / 'ros2.txt').read_text()
+
+
+def test_replay_flight_refuses_while_the_simulation_runs(stubs, tmp_path):
+    folder = recorded_flight(tmp_path, '/uav/rgb/image')
+    result = replay(stubs, tmp_path, folder.name, sim_running=True)
+    assert result.returncode == 1 and 'simulation is running' in result.stderr
+    assert not (stubs.log / 'ros2.txt').exists()
+
+
+def test_replay_flight_explains_a_missing_or_unfinished_recording(stubs, tmp_path):
+    assert 'no flight' in replay(stubs, tmp_path, 'nope').stderr
+    (tmp_path / 'flight_recordings' / 'cut').mkdir(parents=True)  # power cut: the bag never closed
+    assert 'no closed recording' in replay(stubs, tmp_path, 'cut').stderr
