@@ -35,6 +35,7 @@ def rtabmap_and_odometry(context):
         raise ValueError(f"odometry:={arg('odometry')}: use 'visual' or 'sim'")
 
     rtabmap_args = SELF_FILTER
+    rtabmap_args += ' --Rtabmap/DetectionRate ' + arg('detection_rate')
     if arg('new_map') == 'true':
         rtabmap_args = '--delete_db_on_start ' + rtabmap_args
     if lidar:
@@ -96,6 +97,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'new_map', default_value='true',
             description="'true' starts a fresh map; 'false' reloads and continues the map in database_path"),
+        DeclareLaunchArgument(
+            'detection_rate', default_value='2',
+            description="Map update rate in Hz (odometry runs at the camera rate regardless); RTAB-Map's own "
+                        "default is 1. '0' adds every camera frame: the database grows ~3.6 GB in 20 min "
+                        "and rtabmap_viz stalls"),
         DeclareLaunchArgument(
             'database_path', default_value='~/.ros/rtabmap.db', description='RTAB-Map map database'),
         DeclareLaunchArgument('rtabmap_viz', default_value='true', description='RTAB-Map viewer'),

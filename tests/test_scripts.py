@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+import yaml
 
 from conftest import REPO, needs_ros_setup, run
 
@@ -127,30 +128,149 @@ def test_launch_sim_world_and_default_px4_dir(tmp_path, stubs):
     assert call['cwd'] == str(tmp_path / 'PX4-Autopilot') and call['env']['PX4_GZ_WORLD'] == 'walls'
 
 
+@pytest.mark.parametrize('nvidia_smi, gpu, offload', [
+    ('exit 0', '', True),             # working NVIDIA driver: render on it
+    ('exit 9', '', False),            # no NVIDIA GPU or driver: unchanged
+    ('exit 0', 'integrated', False),  # opted out
+])
+def test_launch_sim_renders_on_the_nvidia_gpu_only_when_one_works(tmp_path, stubs, nvidia_smi, gpu, offload):
+    stubs.add('make').add('nvidia-smi', script=nvidia_smi + '\n')
+    (tmp_path / 'PX4').mkdir()
+    env = {k: v for k, v in stubs.env(GPU=gpu).items() if not k.startswith(('__NV_', '__GLX_'))}
+    result = run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'PX4')], env=env)
+    assert result.returncode == 0, result.stderr
+    (call,) = stubs.calls('make')
+    expected = {'__NV_PRIME_RENDER_OFFLOAD': '1', '__GLX_VENDOR_LIBRARY_NAME': 'nvidia'} if offload else {}
+    assert {k: v for k, v in call['env'].items() if k.startswith(('__NV_', '__GLX_'))} == expected
+
+
+@pytest.mark.parametrize('extra, nav_dll_act', [
+    ({'NO_GCS': 'true'}, '0'),                                    # arm without QGroundControl
+    ({}, '2'),                                                    # undo an earlier NO_GCS run (PX4 saves params)
+    ({'NO_GCS': 'false', 'PX4_PARAM_NAV_DLL_ACT': '1'}, '1'),     # a value the user set themselves is kept
+])
+def test_launch_sim_no_gcs_option(tmp_path, stubs, extra, nav_dll_act):
+    stubs.add('make')
+    (tmp_path / 'PX4').mkdir()
+    env = stubs.env(**extra)
+    for name in ('NO_GCS', 'PX4_PARAM_NAV_DLL_ACT'):
+        if name not in extra:
+            env.pop(name, None)
+    result = run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'PX4')], env=env)
+    assert result.returncode == 0, result.stderr
+    (call,) = stubs.calls('make')
+    assert call['env']['PX4_PARAM_NAV_DLL_ACT'] == nav_dll_act
+
+
 def test_launch_sim_stops_if_px4_is_missing(tmp_path, stubs):
     stubs.add('make')
     result = run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'nope')], env=stubs.env())
     assert result.returncode != 0 and stubs.calls('make') == []
 
 
+@pytest.mark.parametrize('own, expected', [(None, '60'), ('150', '150')])
+def test_launch_sim_limits_manual_yaw_rate(tmp_path, stubs, own, expected):
+    """Full yaw stick at PX4's 150 deg/s made the drone sink and RTAB-Map lose track; a value you set is kept."""
+    stubs.add('make')
+    (tmp_path / 'PX4').mkdir()
+    env = stubs.env(**({'PX4_PARAM_MPC_MAN_Y_MAX': own} if own else {}))
+    if not own:
+        env.pop('PX4_PARAM_MPC_MAN_Y_MAX', None)
+    assert run([str(REPO / 'sim/launch_sim.sh'), str(tmp_path / 'PX4')], env=env).returncode == 0
+    assert stubs.calls('make')[0]['env']['PX4_PARAM_MPC_MAN_Y_MAX'] == expected
+
+
+# ---- sim/reset_drone.sh ----
+
+PX4_CLIENTS = ('px4-commander', 'px4-ekf2', 'px4-listener')
+
+
+def reset_drone(tmp_path, stubs, rtabmap=True, gz_reply='data: true', **env):
+    """Runs reset_drone.sh against a fake PX4 build whose client commands (px4-commander, ...) are stubs."""
+    stubs.add('gz', 'ros2', *PX4_CLIENTS)
+    bin_dir = tmp_path / 'PX4/build/px4_sitl_default/bin'
+    bin_dir.mkdir(parents=True)
+    for name in PX4_CLIENTS:
+        (bin_dir / name).symlink_to(stubs.bin / name)
+    services = '/rtabmap/rgbd_odometry/reset_odom\n' if rtabmap else '/other/service\n'
+    return run([str(REPO / 'sim/reset_drone.sh'), str(tmp_path / 'PX4')], env=stubs.env(
+        ROS_OVERLAY=stubs.overlay, STUB_GZ_STDOUT=gz_reply, STUB_ROS2_STDOUT=services,
+        STUB_PX4_LISTENER_STDOUT='    pre_flight_checks_pass: True\n', **env))
+
+
+@needs_ros_setup
+def test_reset_drone_disarms_moves_it_upright_to_the_spawn_point_and_restarts_the_estimator(tmp_path, stubs):
+    result = reset_drone(tmp_path, stubs)
+    assert result.returncode == 0, result.stderr
+    assert 'ready for takeoff' in result.stdout
+    assert [c['argv'] for c in stubs.calls('px4-commander')] == [['disarm', '-f']]
+    (gz,) = stubs.calls('gz')
+    assert gz['argv'][:3] == ['service', '-s', '/world/default_warehouse/set_pose']
+    request = gz['argv'][gz['argv'].index('--req') + 1]
+    # PX4 spawns x500_depth_0 at the world origin; upright = identity orientation.
+    assert 'name: "x500_depth_0"' in request and 'x: 0 y: 0' in request and 'orientation { w: 1 }' in request
+    assert [c['argv'] for c in stubs.calls('px4-ekf2')] == [['stop'], ['start']]
+    assert ['service', 'call', '/rtabmap/rgbd_odometry/reset_odom', 'std_srvs/srv/Empty'] in \
+        [c['argv'] for c in stubs.calls('ros2')]
+
+
+@needs_ros_setup
+def test_reset_drone_world_and_no_rtabmap(tmp_path, stubs):
+    result = reset_drone(tmp_path, stubs, rtabmap=False, WORLD='walls')
+    assert result.returncode == 0, result.stderr
+    assert stubs.calls('gz')[0]['argv'][2] == '/world/walls/set_pose'
+    assert all(c['argv'][:2] != ['service', 'call'] for c in stubs.calls('ros2'))
+
+
+@needs_ros_setup
+def test_reset_drone_stops_if_the_drone_cannot_be_moved(tmp_path, stubs):
+    """E.g. Gazebo's reset deleted the drone: then the estimator is left alone and the user is told why."""
+    result = reset_drone(tmp_path, stubs, gz_reply='data: false')
+    assert result.returncode == 1
+    assert 'restart the sim' in result.stderr
+    assert stubs.calls('px4-ekf2') == []
+
+
+@needs_ros_setup
+@pytest.mark.parametrize('own', [None, '10.0.0.5'])
+def test_gazebo_tools_use_loopback_like_px4(tmp_path, stubs, monkeypatch, own):
+    """PX4 starts Gazebo with GZ_IP=127.0.0.1. On the default interface the bridge and reset lost Gazebo
+    whenever the Wi-Fi dropped (suspend). An address you set is kept."""
+    expected = own or '127.0.0.1'
+    extra = {'GZ_IP': own} if own else {}
+    monkeypatch.delenv('GZ_IP', raising=False)
+    assert reset_drone(tmp_path, stubs, **extra).returncode == 0
+    assert stubs.calls('gz')[0]['env']['GZ_IP'] == expected
+    stubs.add('ros2')
+    (stubs.log / 'ros2.jsonl').unlink()
+    env = stubs.env(ROS_OVERLAY=stubs.overlay, XDG_RUNTIME_DIR=tmp_path, **extra)
+    assert run([str(REPO / 'sim/bridge.sh')], env=env).returncode == 0
+    assert ros2_call(stubs)['env']['GZ_IP'] == expected
+
+
+def test_reset_drone_needs_a_px4_build(tmp_path):
+    result = run([str(REPO / 'sim/reset_drone.sh'), str(tmp_path / 'nope')])
+    assert result.returncode == 1 and 'make px4' in result.stderr
+
+
 # ---- sim/bridge.sh ----
 
 def bridge(stubs, **env):
+    """({gz_topic: (ros_type, direction, gz_type)}, {gz_topic: ros_topic}) from the config bridge.sh writes."""
     stubs.add('ros2')
+    env.setdefault('XDG_RUNTIME_DIR', str(stubs.log))
     result = run([str(REPO / 'sim/bridge.sh')], env=stubs.env(ROS_OVERLAY=stubs.overlay, **env))
     assert result.returncode == 0, result.stderr
     argv = ros2_call(stubs)['argv']
-    assert argv[:3] == ['run', 'ros_gz_bridge', 'parameter_bridge']
-    split = argv.index('--ros-args')
-    specs, ros_args = argv[3:split], argv[split + 1:]
-    assert ros_args[::2] == ['-r'] * (len(ros_args) // 2)
-    remaps = dict(r.split(':=') for r in ros_args[1::2])
-    # 'gz_topic@ros_type[gz_type': '[' bridges Gazebo -> ROS only.
-    bridges = {}
-    for spec in specs:
-        m = re.fullmatch(r'([^@]+)@([^\[\]@]+)([\[\]@])([^\[\]@]+)', spec)
-        assert m, spec
-        bridges[m.group(1)] = (m.group(2), m.group(3), m.group(4))
+    assert argv[:4] == ['run', 'ros_gz_bridge', 'parameter_bridge', '--ros-args']
+    assert argv[4] == '-p' and argv[5].startswith('config_file:=') and len(argv) == 6
+    entries = yaml.safe_load(Path(argv[5].split(':=', 1)[1]).read_text())
+    # Lazy: unused topics (the 10 MB /uav/points cloud) must not load the single-threaded bridge.
+    assert all(e['lazy'] is True for e in entries)
+    # '[' bridges Gazebo -> ROS only, as GZ_TO_ROS does.
+    bridges = {e['gz_topic_name']: (e['ros_type_name'], '[' if e['direction'] == 'GZ_TO_ROS' else '?',
+                                    e['gz_type_name']) for e in entries}
+    remaps = {e['gz_topic_name']: e['ros_topic_name'] for e in entries}
     return bridges, remaps
 
 
@@ -223,6 +343,38 @@ def test_launcher_runs_its_launch_file_by_absolute_path(stubs, tmp_path, script,
     result = run([str(REPO / script), *args], env=stubs.env(ROS_OVERLAY=stubs.overlay), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert ros2_call(stubs)['argv'] == ['launch', str(REPO / launch_file), *args]
+
+
+@needs_ros_setup
+@pytest.mark.parametrize('script', ['sim/bridge.sh', 'sim/rtabmap.sh'])
+@pytest.mark.parametrize('own_profile', [None, '/my/profile.xml'])
+def test_sim_scripts_use_the_shared_memory_dds_profile(stubs, tmp_path, script, own_profile):
+    """Both ends of the camera images (bridge and RTAB-Map) need the profile, or the images go over UDP
+    and reach RTAB-Map at a few Hz. A profile the user set is kept."""
+    stubs.add('ros2')
+    env = stubs.env(ROS_OVERLAY=stubs.overlay, XDG_RUNTIME_DIR=tmp_path)
+    env.pop('FASTRTPS_DEFAULT_PROFILES_FILE', None)
+    if own_profile:
+        env['FASTRTPS_DEFAULT_PROFILES_FILE'] = own_profile
+    result = run([str(REPO / script)], env=env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    expected = own_profile or str(REPO / 'sim/fastdds.xml')
+    assert ros2_call(stubs)['env']['FASTRTPS_DEFAULT_PROFILES_FILE'] == expected
+
+
+def test_fastdds_profile_is_the_default_and_uses_shared_memory_and_localhost_udp():
+    ns = {'d': 'http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles'}
+    root = ET.parse(REPO / 'sim/fastdds.xml').getroot()
+    transports = {t.findtext('d:transport_id', namespaces=ns): t for t in root.iterfind('.//d:transport_descriptor', ns)}
+    participant = root.find('d:participant', ns)
+    assert participant.get('is_default_profile') == 'true'
+    used = [t.text for t in participant.iterfind('.//d:userTransports/d:transport_id', ns)]
+    assert sorted(transports[t].findtext('d:type', namespaces=ns) for t in used) == ['SHM', 'UDPv4']
+    shm = next(transports[t] for t in used if transports[t].findtext('d:type', namespaces=ns) == 'SHM')
+    assert int(shm.findtext('d:segment_size', namespaces=ns)) >= 4 * 640 * 480 * 4  # several depth images
+    udp = next(transports[t] for t in used if transports[t].findtext('d:type', namespaces=ns) == 'UDPv4')
+    # Same reach as ROS_LOCALHOST_ONLY=1: nothing leaves the machine.
+    assert [a.text for a in udp.iterfind('.//d:address', ns)] == ['127.0.0.1']
 
 
 @needs_ros_setup
@@ -388,11 +540,15 @@ def test_not_jetson_guard(stubs, machine, ok):
 
 
 @pytest.mark.parametrize('args, expected', [
-    (['sim', 'PX4_DIR=/px4'], './sim/launch_sim.sh /px4'),
+    (['sim', 'PX4_DIR=/px4'], 'NO_GCS=false ./sim/launch_sim.sh /px4'),
+    (['sim', 'PX4_DIR=/px4', 'NO_GCS=true'], 'NO_GCS=true ./sim/launch_sim.sh /px4'),
     (['models', 'PX4_DIR=/px4'], './sim/install_models.sh /px4'),
     (['bridge'], './sim/bridge.sh'),
-    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true'),
-    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false'], './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false'),
+    (['reset-drone', 'PX4_DIR=/px4'], './sim/reset_drone.sh /px4'),
+    (['camera'], 'PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py'),
+    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=2'),
+    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1'],
+     './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1'),
     (['save-map', 'OUT=/maps/w'],
      'source /opt/ros/humble/setup.bash && python3 tools/save_map.py --ros-args -p out:=/maps/w'),
     (['load-map', 'MAP=/maps/w.yaml'],
@@ -476,6 +632,39 @@ def test_check_spots_outdated_models_in_px4(stubs, tmp_path, model_file):
     (px4 / 'Tools/simulation/gz/models' / model_file).write_text('stock\n')
     result = check(stubs, tmp_path, installed='*', PX4_DIR=px4)
     assert result.returncode != 0 and 'MISSING  custom models in PX4' in result.stdout
+
+
+def qgc_app(tmp_path, stubs):
+    """A QGroundControl "AppImage" that records being started."""
+    stubs.add('QGroundControl.AppImage')
+    return stubs.bin / 'QGroundControl.AppImage'
+
+
+@pytest.mark.parametrize('installed, sudo_argv', [
+    ('*', None),  # everything there: no sudo prompt at all
+    ('gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl libfuse2 libxcb-xinerama0 libxkbcommon-x11-0',
+     ['apt-get', 'install', '-y', 'libxcb-cursor-dev']),  # only what is missing
+])
+def test_make_qgc_installs_only_missing_libraries_and_keeps_the_appimage(stubs, tmp_path, installed, sudo_argv):
+    dpkg_stub(stubs)
+    stubs.add('sudo', 'wget')
+    app = qgc_app(tmp_path, stubs)
+    result = make('qgc', f'QGC_APP={app}', env=stubs.env(STUB_DPKG_INSTALLED=installed))
+    assert result.returncode == 0, result.stderr
+    assert [c['argv'] for c in stubs.calls('sudo')] == ([sudo_argv] if sudo_argv else [])
+    assert ('libraries already installed' in result.stdout) == (sudo_argv is None)
+    assert stubs.calls('wget') == [] and 'QGroundControl already at' in result.stdout
+
+
+def test_make_qgc_run_starts_the_appimage(stubs, tmp_path):
+    app = qgc_app(tmp_path, stubs)
+    assert make('qgc-run', f'QGC_APP={app}', env=stubs.env()).returncode == 0
+    assert len(stubs.calls('QGroundControl.AppImage')) == 1
+
+
+def test_make_qgc_run_without_qgc_says_how_to_install_it(tmp_path):
+    result = make('qgc-run', f'QGC_APP={tmp_path / "none.AppImage"}')
+    assert result.returncode != 0 and 'run make qgc' in result.stdout
 
 
 def test_check_warns_about_the_fortress_bridge(stubs, tmp_path):

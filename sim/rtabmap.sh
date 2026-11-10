@@ -6,5 +6,7 @@
 set -eo pipefail
 source /opt/ros/humble/setup.bash
 if [ -n "${ROS_OVERLAY:-}" ]; then source "$ROS_OVERLAY"; fi
+# Shared-memory transport for the camera images (see fastdds.xml); keeps a profile you set yourself.
+export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTRTPS_DEFAULT_PROFILES_FILE:-$(cd "$(dirname "$0")" && pwd)/fastdds.xml}"
 
 ros2 launch "$(cd "$(dirname "$0")" && pwd)/rtabmap.launch.py" "$@"

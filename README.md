@@ -55,7 +55,7 @@ Our drone needs custom Gazebo models, in [`sim/models/`](sim/models):
 | Model | Change |
 |---|---|
 | `x500_depth` | Adds the OdometryPublisher plugin (ground-truth odometry, 3D) and a 3D lidar |
-| `OakD-Lite` | 640x480 RGB + depth, frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
+| `OakD-Lite` | 640x480 RGB + depth at 15 Hz (30 is more than Gazebo can render here), frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
 | `lidar_3d` | 3D lidar model (not in stock PX4) |
 | `depot` | Warehouse building, shelves and crates of the `default_warehouse` world (not in stock PX4; Open Robotics, from Gazebo Fuel) |
 | `person` | Standing person, placed 3 times in `default_warehouse` (not in stock PX4; Marina Kollmitz, from Gazebo Fuel) |
@@ -70,13 +70,18 @@ make models   # same as ./sim/install_models.sh ~/PX4-Autopilot
 
 ## Running the simulation
 
-Terminal 1 starts PX4 + Gazebo. The first start can take a minute or two.
+Terminal 1 starts PX4 + Gazebo. The first start can take a minute or two. On a laptop with an NVIDIA
+GPU (driver working, `nvidia-smi` runs) Gazebo renders on it; `GPU=integrated make sim` keeps the
+default GPU. Without that, a hybrid-graphics laptop renders on the integrated GPU and the sim crawls.
 
 ```bash
 make sim      # same as ./sim/launch_sim.sh ~/PX4-Autopilot
+make qgc-run  # QGroundControl (another terminal); connects to the sim by itself
 ```
 
 Terminal 2 starts the Gazebo → ROS 2 bridge. Leave it running.
+`make bridge` and `make rtabmap` use [`sim/fastdds.xml`](sim/fastdds.xml), a Fast DDS profile with shared memory:
+with `ROS_LOCALHOST_ONLY=1` alone, the 1 MB camera images go over UDP and reach RTAB-Map at a few Hz.
 
 ```bash
 make bridge   # same as ./sim/bridge.sh
@@ -84,6 +89,11 @@ make bridge   # same as ./sim/bridge.sh
 
 Terminal 3 starts RTAB-Map (RGB-D SLAM with its own visual odometry) and its viewer.
 Fly the drone (QGroundControl, or `commander takeoff` in the PX4 shell) to build the map.
+PX4 refuses to arm until QGroundControl is connected; `make sim NO_GCS=true` lets `commander takeoff`
+work without it (sim only: it also turns off the return-home failsafe on GCS link loss).
+After a crash, `make reset-drone` puts the drone back upright at its start point, disarmed, without
+restarting anything (Gazebo's own reset button deletes the drone; then only restarting `make sim` helps).
+To fly with a gamepad and move the camera with it, see [Flying with a gamepad](#flying-with-a-gamepad).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)
@@ -96,6 +106,7 @@ Options (all can be combined):
 | `make rtabmap ODOMETRY=sim` | Use Gazebo's simulated odometry (`/uav/odom`) instead of RTAB-Map's visual odometry. It is ground truth, so use `visual` (default) when measuring localization accuracy |
 | `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
+| `make rtabmap RATE=1` | Map updates per second (default `2`; odometry always runs at the camera rate). `1` is lighter on the CPU, e.g. on battery. `0` adds every camera frame: about 3.6 GB of database in 20 minutes, and the viewer stalls |
 
 Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
 NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a
@@ -115,6 +126,49 @@ The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
 (drop `use_sim_time`).
+
+### Flying with a gamepad
+
+The sticks fly the drone through QGroundControl; `make camera` moves the view with the buttons
+QGroundControl leaves free. Any Xbox-style pad works (tested with a PowerA Xbox Series X wired pad).
+
+One-time setup, per person (stored in your own QGroundControl settings, not in the repo):
+
+1. Plug the pad in, then start QGroundControl (`make qgc-run`). If the pad does not show up, restart
+   QGroundControl with the pad connected.
+2. Vehicle Configuration → **Joystick** (the page only appears while a pad is connected and the sim is
+   running): turn on **Enable joystick input**, pick **RC Mode 2**, and run **Calibration**.
+3. On the General tab, check the sliders: left stick up moves only Throttle, left/right only Yaw,
+   right stick up/down only Pitch, left/right only Roll. If not, calibrate again.
+
+No pad? Application Settings → Fly View → **Virtual Joystick** gives on-screen sticks instead.
+
+Flying (RC Mode 2):
+
+- Take off with `commander takeoff` in the PX4 shell or from QGroundControl, then set the flight mode
+  to **Position**: the drone holds its place and height when the sticks are centered. In Hold,
+  Takeoff or Mission mode PX4 flies itself and ignores the sticks.
+- Left stick: up/down climbs/descends, left/right turns (at most 60 deg/s, see `launch_sim.sh`).
+  Right stick: forward/back and sideways.
+- Fly slowly and turn gently: fast turns make RTAB-Map's visual odometry lose track.
+- Crashed or flipped: `make reset-drone`. Not Gazebo's reset button, which deletes the drone.
+
+Camera, in another terminal next to the sim (`make camera`):
+
+| Pad | Gazebo view |
+|---|---|
+| D-pad left / right | Orbit around the drone |
+| D-pad up / down | Camera higher / lower |
+| RT / LT | Zoom in / out (press harder: faster) |
+| Y | Back to the start view |
+| X | First person on/off: a window with the drone's own RGB camera (what RTAB-Map sees, 15 Hz). Esc or Q in the window also closes it; its close button does not |
+
+- The Gazebo view camera itself cannot look forward from the drone, hence the separate window.
+- Several pads plugged in? Pick yours: `python3 sim/camera_orbit.py --device /dev/input/js1`.
+- Pads with another layout (PlayStation, ...) may number their buttons differently; the script
+  expects the Xbox layout of the Linux `xpad` driver (D-pad axes 6/7, triggers 2/5, X/Y buttons 2/3).
+- If you assigned QGroundControl actions to the D-pad, triggers, X or Y, both programs react to the
+  same press: clear them under Joystick → Button Assignment.
 
 ### Worlds
 

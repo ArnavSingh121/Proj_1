@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Fast DDS profile for the sim scripts (bridge.sh, rtabmap.sh export it).
+     On Humble, ROS_LOCALHOST_ONLY=1 leaves Fast DDS with UDP over loopback only, and 1 MB camera images
+     then reach RTAB-Map at 1-5 Hz instead of 15 (odometry 2 Hz). Shared memory (16 MB segments, room for
+     several images) carries them at full rate; UDP stays on 127.0.0.1 for everything else. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>shm</transport_id>
+      <type>SHM</type>
+      <segment_size>16777216</segment_size>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>udp_localhost</transport_id>
+      <type>UDPv4</type>
+      <interfaceWhiteList>
+        <address>127.0.0.1</address>
+      </interfaceWhiteList>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="sim_shm" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>shm</transport_id>
+        <transport_id>udp_localhost</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

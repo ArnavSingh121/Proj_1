@@ -20,12 +20,17 @@ QGC_URL  ?= https://github.com/mavlink/qgroundcontrol/releases/download/v5.0.8/Q
 QGC_APP  ?= $(HOME)/QGroundControl-v5.0.8-x86_64.AppImage
 # ZED camera model on the drone, for `make jetson` (zed, zedm, zed2, zed2i, zedx, zedxm, ...)
 ZED_MODEL ?=
+# `make sim`: true lets PX4 arm without QGroundControl (pxh> commander takeoff)
+NO_GCS ?= false
 # `make zed-usb`: true if the ZED is upside down
 FLIP ?= false
 # `make rtabmap`: odometry source (visual | sim), simulated 3D lidar (true | false), fresh map or reload
 ODOMETRY ?= visual
 LIDAR    ?= false
 NEW_MAP  ?= true
+# `make rtabmap`: map update rate in Hz (odometry always runs at the camera rate). 0 = every camera frame:
+# ~3.6 GB of database in 20 min and a viewer that stalls; 1 eases the CPU on battery
+RATE     ?= 2
 # `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml
@@ -62,8 +67,8 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
-.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
-	check test sim bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
+.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run \
+	check test sim reset-drone camera bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -139,14 +144,20 @@ px4: base ## Clone PX4 at PX4_REF, run its setup script, build SITL
 models: ## Copy our custom Gazebo models and worlds (sim/models, sim/worlds) into PX4
 	./sim/install_models.sh $(PX4_DIR)
 
-qgc: ## QGroundControl AppImage + its libraries
-	sudo apt-get install -y $(QGC_PKGS)
+qgc: ## QGroundControl AppImage + its libraries (sudo only if a library is missing)
+	@missing=$$(for p in $(QGC_PKGS); do dpkg -s $$p >/dev/null 2>&1 || echo $$p; done); \
+	if [ -n "$$missing" ]; then sudo apt-get install -y $$missing; \
+	else echo "QGroundControl libraries already installed"; fi
 	@if [ -f $(QGC_APP) ]; then \
 		echo "QGroundControl already at $(QGC_APP)"; \
 	else \
 		wget -O $(QGC_APP) $(QGC_URL); \
 	fi
 	chmod +x $(QGC_APP)
+
+qgc-run: ## Start QGroundControl (connects to the running sim by itself)
+	@if [ ! -x $(QGC_APP) ]; then echo "No QGroundControl at $(QGC_APP): run make qgc"; exit 1; fi
+	$(QGC_APP)
 
 check: ## Report what is installed and what is missing (no sudo)
 	@missing=0; \
@@ -181,14 +192,20 @@ test: ## Run the tests: config consistency, ZED USB publisher, scripts + Makefil
 	@if [ -f $(ROS_SETUP) ]; then source $(ROS_SETUP); fi; \
 	PYTHONNOUSERSITE=1 python3 -m pytest tests $(PYTEST_ARGS)
 
-sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1)
-	./sim/launch_sim.sh $(PX4_DIR)
+sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1), e.g. make sim NO_GCS=true
+	NO_GCS=$(NO_GCS) ./sim/launch_sim.sh $(PX4_DIR)
+
+reset-drone: ## Put the drone back upright at its start point without restarting the sim (e.g. after a crash)
+	./sim/reset_drone.sh $(PX4_DIR)
+
+camera: ## Gamepad camera: orbit Gazebo's follow view (D-pad, LT/RT, Y), first person on X
+	PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py
 
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh
 
-rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false
-	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP)
+rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1
+	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE)
 
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
