@@ -231,6 +231,23 @@ def test_reset_drone_stops_if_the_drone_cannot_be_moved(tmp_path, stubs):
     assert stubs.calls('px4-ekf2') == []
 
 
+@needs_ros_setup
+@pytest.mark.parametrize('own', [None, '10.0.0.5'])
+def test_gazebo_tools_use_loopback_like_px4(tmp_path, stubs, monkeypatch, own):
+    """PX4 starts Gazebo with GZ_IP=127.0.0.1. On the default interface the bridge and reset lost Gazebo
+    whenever the Wi-Fi dropped (suspend). An address you set is kept."""
+    expected = own or '127.0.0.1'
+    extra = {'GZ_IP': own} if own else {}
+    monkeypatch.delenv('GZ_IP', raising=False)
+    assert reset_drone(tmp_path, stubs, **extra).returncode == 0
+    assert stubs.calls('gz')[0]['env']['GZ_IP'] == expected
+    stubs.add('ros2')
+    (stubs.log / 'ros2.jsonl').unlink()
+    env = stubs.env(ROS_OVERLAY=stubs.overlay, XDG_RUNTIME_DIR=tmp_path, **extra)
+    assert run([str(REPO / 'sim/bridge.sh')], env=env).returncode == 0
+    assert ros2_call(stubs)['env']['GZ_IP'] == expected
+
+
 def test_reset_drone_needs_a_px4_build(tmp_path):
     result = run([str(REPO / 'sim/reset_drone.sh'), str(tmp_path / 'nope')])
     assert result.returncode == 1 and 'make px4' in result.stderr

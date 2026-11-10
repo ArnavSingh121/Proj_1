@@ -152,6 +152,8 @@ def main():
     parser.add_argument('--world', default=os.environ.get('WORLD', 'default_warehouse'))
     args = parser.parse_args()
 
+    # Gazebo over loopback, as PX4 starts it: the default interface breaks when the Wi-Fi drops.
+    os.environ.setdefault('GZ_IP', '127.0.0.1')
     from gz.msgs10.boolean_pb2 import Boolean
     from gz.msgs10.stringmsg_pb2 import StringMsg
     from gz.msgs10.vector3d_pb2 import Vector3d

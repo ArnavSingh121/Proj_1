@@ -8,6 +8,9 @@ set -eo pipefail  # not -u: the ROS setup script reads unset variables
 
 PX4_DIR="${1:-$HOME/PX4-Autopilot}"
 WORLD="${WORLD:-default_warehouse}"
+# Talk to Gazebo over loopback, as PX4 starts it (GZ_IP=127.0.0.1): with the default interface, a
+# Wi-Fi drop (suspend, roaming) cuts the link ("Exception sending a multicast message").
+export GZ_IP="${GZ_IP:-127.0.0.1}"
 MODEL=x500_depth_0
 BIN="$PX4_DIR/build/px4_sitl_default/bin"
 if [ ! -x "$BIN/px4-commander" ]; then

@@ -10,6 +10,9 @@ if [ -n "${ROS_OVERLAY:-}" ]; then source "$ROS_OVERLAY"; fi
 export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTRTPS_DEFAULT_PROFILES_FILE:-$(cd "$(dirname "$0")" && pwd)/fastdds.xml}"
 
 WORLD="${WORLD:-default_warehouse}"
+# Talk to Gazebo over loopback, as PX4 starts it (GZ_IP=127.0.0.1): with the default interface, a
+# Wi-Fi drop (suspend, roaming) cuts the link ("Exception sending a multicast message").
+export GZ_IP="${GZ_IP:-127.0.0.1}"
 MODEL=x500_depth_0
 CAM=/world/$WORLD/model/$MODEL/link/camera_link/sensor/IMX214
 IMU=/world/$WORLD/model/$MODEL/link/base_link/sensor/imu_sensor/imu
