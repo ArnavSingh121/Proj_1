@@ -28,8 +28,9 @@ FLIP ?= false
 ODOMETRY ?= visual
 LIDAR    ?= false
 NEW_MAP  ?= true
-# `make rtabmap`: map update rate in Hz, 0 = every camera frame (1 eases the CPU on battery)
-RATE     ?= 0
+# `make rtabmap`: map update rate in Hz (odometry always runs at the camera rate). 0 = every camera frame:
+# ~3.6 GB of database in 20 min and a viewer that stalls; 1 eases the CPU on battery
+RATE     ?= 2
 # `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml

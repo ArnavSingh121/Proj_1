@@ -108,7 +108,7 @@ Options (all can be combined):
 | `make rtabmap ODOMETRY=sim` | Use Gazebo's simulated odometry (`/uav/odom`) instead of RTAB-Map's visual odometry. It is ground truth, so use `visual` (default) when measuring localization accuracy |
 | `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
-| `make rtabmap RATE=1` | Update the map once a second instead of on every camera frame (default `0`): much lighter on the CPU, e.g. on battery |
+| `make rtabmap RATE=1` | Map updates per second (default `2`; odometry always runs at the camera rate). `1` is lighter on the CPU, e.g. on battery. `0` adds every camera frame: about 3.6 GB of database in 20 minutes, and the viewer stalls |
 
 Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
 NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a
