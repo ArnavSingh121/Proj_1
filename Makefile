@@ -66,7 +66,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
-.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
+.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run \
 	check test sim reset-drone camera bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
@@ -143,14 +143,20 @@ px4: base ## Clone PX4 at PX4_REF, run its setup script, build SITL
 models: ## Copy our custom Gazebo models and worlds (sim/models, sim/worlds) into PX4
 	./sim/install_models.sh $(PX4_DIR)
 
-qgc: ## QGroundControl AppImage + its libraries
-	sudo apt-get install -y $(QGC_PKGS)
+qgc: ## QGroundControl AppImage + its libraries (sudo only if a library is missing)
+	@missing=$$(for p in $(QGC_PKGS); do dpkg -s $$p >/dev/null 2>&1 || echo $$p; done); \
+	if [ -n "$$missing" ]; then sudo apt-get install -y $$missing; \
+	else echo "QGroundControl libraries already installed"; fi
 	@if [ -f $(QGC_APP) ]; then \
 		echo "QGroundControl already at $(QGC_APP)"; \
 	else \
 		wget -O $(QGC_APP) $(QGC_URL); \
 	fi
 	chmod +x $(QGC_APP)
+
+qgc-run: ## Start QGroundControl (connects to the running sim by itself)
+	@if [ ! -x $(QGC_APP) ]; then echo "No QGroundControl at $(QGC_APP): run make qgc"; exit 1; fi
+	$(QGC_APP)
 
 check: ## Report what is installed and what is missing (no sudo)
 	@missing=0; \

@@ -634,6 +634,39 @@ def test_check_spots_outdated_models_in_px4(stubs, tmp_path, model_file):
     assert result.returncode != 0 and 'MISSING  custom models in PX4' in result.stdout
 
 
+def qgc_app(tmp_path, stubs):
+    """A QGroundControl "AppImage" that records being started."""
+    stubs.add('QGroundControl.AppImage')
+    return stubs.bin / 'QGroundControl.AppImage'
+
+
+@pytest.mark.parametrize('installed, sudo_argv', [
+    ('*', None),  # everything there: no sudo prompt at all
+    ('gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl libfuse2 libxcb-xinerama0 libxkbcommon-x11-0',
+     ['apt-get', 'install', '-y', 'libxcb-cursor-dev']),  # only what is missing
+])
+def test_make_qgc_installs_only_missing_libraries_and_keeps_the_appimage(stubs, tmp_path, installed, sudo_argv):
+    dpkg_stub(stubs)
+    stubs.add('sudo', 'wget')
+    app = qgc_app(tmp_path, stubs)
+    result = make('qgc', f'QGC_APP={app}', env=stubs.env(STUB_DPKG_INSTALLED=installed))
+    assert result.returncode == 0, result.stderr
+    assert [c['argv'] for c in stubs.calls('sudo')] == ([sudo_argv] if sudo_argv else [])
+    assert ('libraries already installed' in result.stdout) == (sudo_argv is None)
+    assert stubs.calls('wget') == [] and 'QGroundControl already at' in result.stdout
+
+
+def test_make_qgc_run_starts_the_appimage(stubs, tmp_path):
+    app = qgc_app(tmp_path, stubs)
+    assert make('qgc-run', f'QGC_APP={app}', env=stubs.env()).returncode == 0
+    assert len(stubs.calls('QGroundControl.AppImage')) == 1
+
+
+def test_make_qgc_run_without_qgc_says_how_to_install_it(tmp_path):
+    result = make('qgc-run', f'QGC_APP={tmp_path / "none.AppImage"}')
+    assert result.returncode != 0 and 'run make qgc' in result.stdout
+
+
 def test_check_warns_about_the_fortress_bridge(stubs, tmp_path):
     result = check(stubs, tmp_path, installed='ros-humble-ros-gz-bridge', PX4_DIR=tmp_path)
     assert 'WARNING  ros-humble-ros-gz-bridge (Fortress) is installed' in result.stdout

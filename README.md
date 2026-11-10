@@ -76,6 +76,7 @@ default GPU. Without that, a hybrid-graphics laptop renders on the integrated GP
 
 ```bash
 make sim      # same as ./sim/launch_sim.sh ~/PX4-Autopilot
+make qgc-run  # QGroundControl (another terminal); connects to the sim by itself
 ```
 
 Terminal 2 starts the Gazebo → ROS 2 bridge. Leave it running.
