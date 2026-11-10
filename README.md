@@ -93,9 +93,7 @@ PX4 refuses to arm until QGroundControl is connected; `make sim NO_GCS=true` let
 work without it (sim only: it also turns off the return-home failsafe on GCS link loss).
 After a crash, `make reset-drone` puts the drone back upright at its start point, disarmed, without
 restarting anything (Gazebo's own reset button deletes the drone; then only restarting `make sim` helps).
-`make camera` turns Gazebo's follow camera around the drone from the same gamepad: D-pad left/right
-orbits, up/down raises/lowers it, RT/LT zoom in/out, Y returns to the start view, X opens/closes a
-first-person window with the drone's RGB camera (the sticks stay with QGroundControl).
+To fly with a gamepad and move the camera with it, see [Flying with a gamepad](#flying-with-a-gamepad).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)
@@ -128,6 +126,49 @@ The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
 (drop `use_sim_time`).
+
+### Flying with a gamepad
+
+The sticks fly the drone through QGroundControl; `make camera` moves the view with the buttons
+QGroundControl leaves free. Any Xbox-style pad works (tested with a PowerA Xbox Series X wired pad).
+
+One-time setup, per person (stored in your own QGroundControl settings, not in the repo):
+
+1. Plug the pad in, then start QGroundControl (`make qgc-run`). If the pad does not show up, restart
+   QGroundControl with the pad connected.
+2. Vehicle Configuration → **Joystick** (the page only appears while a pad is connected and the sim is
+   running): turn on **Enable joystick input**, pick **RC Mode 2**, and run **Calibration**.
+3. On the General tab, check the sliders: left stick up moves only Throttle, left/right only Yaw,
+   right stick up/down only Pitch, left/right only Roll. If not, calibrate again.
+
+No pad? Application Settings → Fly View → **Virtual Joystick** gives on-screen sticks instead.
+
+Flying (RC Mode 2):
+
+- Take off with `commander takeoff` in the PX4 shell or from QGroundControl, then set the flight mode
+  to **Position**: the drone holds its place and height when the sticks are centered. In Hold,
+  Takeoff or Mission mode PX4 flies itself and ignores the sticks.
+- Left stick: up/down climbs/descends, left/right turns (at most 60 deg/s, see `launch_sim.sh`).
+  Right stick: forward/back and sideways.
+- Fly slowly and turn gently: fast turns make RTAB-Map's visual odometry lose track.
+- Crashed or flipped: `make reset-drone`. Not Gazebo's reset button, which deletes the drone.
+
+Camera, in another terminal next to the sim (`make camera`):
+
+| Pad | Gazebo view |
+|---|---|
+| D-pad left / right | Orbit around the drone |
+| D-pad up / down | Camera higher / lower |
+| RT / LT | Zoom in / out (press harder: faster) |
+| Y | Back to the start view |
+| X | First person on/off: a window with the drone's own RGB camera (what RTAB-Map sees, 15 Hz). Esc or Q in the window also closes it; its close button does not |
+
+- The Gazebo view camera itself cannot look forward from the drone, hence the separate window.
+- Several pads plugged in? Pick yours: `python3 sim/camera_orbit.py --device /dev/input/js1`.
+- Pads with another layout (PlayStation, ...) may number their buttons differently; the script
+  expects the Xbox layout of the Linux `xpad` driver (D-pad axes 6/7, triggers 2/5, X/Y buttons 2/3).
+- If you assigned QGroundControl actions to the D-pad, triggers, X or Y, both programs react to the
+  same press: clear them under Joystick → Button Assignment.
 
 ### Worlds
 
