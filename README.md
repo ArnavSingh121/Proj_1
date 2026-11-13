@@ -134,7 +134,13 @@ stops, and before the next `make rtabmap`, which starts the database over (unles
 `DB=...` exports another database. Send the `.bt`: 5 cm cells, in RTAB-Map's `map` frame (the drone's
 start pose, z up, meters), readable as a plain `OcTree` by octovis, `octomap_server` or the OctoMap
 library (its header says `ColorOcTree`, but `.bt` files hold occupancy only). The `_octomap.ply` next to
-it shows the same cells as a point cloud for MeshLab or CloudCompare. The export ray-traces free space
+it shows the same cells as a point cloud for MeshLab or CloudCompare.
+
+To look at a `.bt`, `make view-octomap OUT=~/maps/warehouse` ([`tools/view_octomap.sh`](tools/view_octomap.sh),
+or `./tools/view_octomap.sh file.bt`) opens it in RViz: the occupied cells colored by height (purple at
+the floor to red at the top), a 1 m grid and the start pose. Tick **Free cells** to see the free space too.
+Closing RViz stops it. For the full map in color, with the camera images and the drone's path, open the
+database instead: `rtabmap-databaseViewer ~/.ros/rtabmap.db`, then Edit → View 3D map. The export ray-traces free space
 (`Grid/RayTracing`): without it, only the floor would be free and everything else unknown.
 
 When visual odometry loses track, RTAB-Map starts a new map in the same database; the export covers only

@@ -555,6 +555,7 @@ def test_not_jetson_guard(stubs, machine, ok):
      'source /opt/ros/humble/setup.bash && python3 tools/load_map.py --ros-args -p map:=/maps/w.yaml'),
     (['load-map', 'OUT=/maps/w'],  # MAP defaults to the map save-map wrote
      'source /opt/ros/humble/setup.bash && python3 tools/load_map.py --ros-args -p map:=/maps/w.yaml'),
+    (['view-octomap', 'OUT=/maps/w'], './tools/view_octomap.sh /maps/w_octomap.bt'),
     (['map-monitor'],
      'source /opt/ros/humble/setup.bash && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true'),
     (['zed-usb'], './zed_usb/run.sh flip:=false'),
@@ -688,3 +689,19 @@ def test_make_save_octomap_exports_the_database_once_rtabmap_stopped(stubs, tmp_
         assert stubs.calls('rtabmap-export')[0]['argv'] == [
             '--octomap', '--Grid/RayTracing', 'true', '--output_dir', f'{tmp_path}/maps/', '--output', 'w',
             '/db/rtabmap.db']
+
+
+def test_view_octomap_without_the_file_says_how_to_make_one(tmp_path):
+    result = run([str(REPO / 'tools/view_octomap.sh'), str(tmp_path / 'none.bt')])
+    assert result.returncode != 0 and 'make save-octomap' in result.stderr
+
+
+def test_octomap_rviz_shows_the_topics_the_viewer_publishes_in_its_frame():
+    script = (REPO / 'tools/view_octomap.sh').read_text()
+    config = yaml.safe_load((REPO / 'tools/octomap.rviz').read_text())['Visualization Manager']
+    assert 'frame_id:=map' in script and config['Global Options']['Fixed Frame'] == 'map'
+    markers = {d['Topic']['Value']: d for d in config['Displays'] if d['Class'].endswith('/MarkerArray')}
+    assert set(markers) == {'/occupied_cells_vis_array', '/free_cells_vis_array'}
+    # octomap_server publishes once, latched: a volatile subscription would show nothing.
+    assert all(d['Topic']['Durability Policy'] == 'Transient Local' for d in markers.values())
+    assert 'publish_free_space:=true' in script and 'use_height_map:=true' in script

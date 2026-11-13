@@ -1,0 +1,62 @@
+# RViz layout for tools/view_octomap.sh: the cells octomap_server publishes once (latched), in frame 'map'.
+# Axes: the map origin, where the drone started. Grid: 1 m cells. Free cells are off (dense); tick them on.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (1 m)
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 160; 160; 164
+    - Class: rviz_default_plugins/Axes
+      Name: Start pose (map origin)
+      Enabled: true
+      Length: 1
+      Radius: 0.05
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Occupied cells
+      Enabled: true
+      Topic:
+        Value: /occupied_cells_vis_array
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Free cells
+      Enabled: false
+      Topic:
+        Value: /free_cells_vis_array
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+  Enabled: true
+  Global Options:
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 22
+      Focal Point:
+        X: 6
+        Y: 0
+        Z: 1
+      Pitch: 0.7
+      Yaw: 3.6
+      Target Frame: <Fixed Frame>
+Window Geometry:
+  Width: 1400
+  Height: 900

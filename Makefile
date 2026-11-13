@@ -70,7 +70,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run qgc-radio \
-	check test sim reset-drone camera bridge rtabmap save-map save-octomap load-map map-monitor zed-usb jetson-deps jetson-check jetson
+	check test sim reset-drone camera bridge rtabmap save-map save-octomap view-octomap load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -221,6 +221,9 @@ save-octomap: ## 3D OctoMap for other groups (<OUT>_octomap.bt, default ~/maps/m
 		echo "Stop RTAB-Map first (Ctrl+C in make rtabmap): it writes the rest of the map to $(DB) when it stops"; exit 1; fi
 	mkdir -p $(dir $(OUT))
 	source $(ROS_SETUP) && rtabmap-export --octomap --Grid/RayTracing true --output_dir $(dir $(OUT)) --output $(notdir $(OUT)) $(DB)
+
+view-octomap: ## Show an OctoMap .bt in RViz (default ~/maps/map_octomap.bt), e.g. make view-octomap OUT=~/maps/warehouse
+	./tools/view_octomap.sh $(OUT)_octomap.bt
 
 load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/maps/warehouse.yaml
 	source $(ROS_SETUP) && python3 tools/load_map.py --ros-args -p map:=$(MAP)
