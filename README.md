@@ -93,7 +93,8 @@ PX4 refuses to arm until QGroundControl is connected; `make sim NO_GCS=true` let
 work without it (sim only: it also turns off the return-home failsafe on GCS link loss).
 After a crash, `make reset-drone` puts the drone back upright at its start point, disarmed, without
 restarting anything (Gazebo's own reset button deletes the drone; then only restarting `make sim` helps).
-To fly with a gamepad and move the camera with it, see [Flying with a gamepad](#flying-with-a-gamepad).
+To fly with a gamepad and move the camera with it, see [Flying with a gamepad](#flying-with-a-gamepad);
+with an RC radio, [Flying with an RC radio](#flying-with-an-rc-radio-radiomaster).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)
@@ -164,11 +165,35 @@ Camera, in another terminal next to the sim (`make camera`):
 | X | First person on/off: a window with the drone's own RGB camera (what RTAB-Map sees, 15 Hz). Esc or Q in the window also closes it; its close button does not |
 
 - The Gazebo view camera itself cannot look forward from the drone, hence the separate window.
-- Several pads plugged in? Pick yours: `python3 sim/camera_orbit.py --device /dev/input/js1`.
+- It reads the first gamepad plugged in and skips RC radios (see below). Several pads plugged in?
+  Pick yours: `python3 sim/camera_orbit.py --device /dev/input/js1`.
 - Pads with another layout (PlayStation, ...) may number their buttons differently; the script
   expects the Xbox layout of the Linux `xpad` driver (D-pad axes 6/7, triggers 2/5, X/Y buttons 2/3).
 - If you assigned QGroundControl actions to the D-pad, triggers, X or Y, both programs react to the
   same press: clear them under Joystick → Button Assignment.
+
+### Flying with an RC radio (Radiomaster)
+
+An EdgeTX or OpenTX radio (tested with a Radiomaster Pocket) plugged in over USB and set to **USB
+Joystick (HID)** mode works too, but not with the gamepad's settings: QGroundControl gives every new
+joystick the Xbox stick layout, which on a radio puts throttle on the right stick. The radio sends its
+channels in AETR order (right stick: roll, pitch; left stick: throttle, yaw), so it needs its own setup.
+QGroundControl keeps settings per joystick name, so the gamepad's are not touched.
+
+1. Plug the radio in and pick **USB Joystick (HID)** on its screen.
+2. Close QGroundControl, then run `make qgc-radio` (`sim/qgc_radio.py`). It writes the radio's layout
+   to `~/.config/QGroundControl/QGroundControl.ini` (previous copy: `QGroundControl.ini.bak`) and makes
+   it the active joystick. QGroundControl must be closed, as it writes its settings back when it exits.
+3. Start QGroundControl (`make qgc-run`); turn on **Enable joystick input** if needed, then check the
+   sliders on the Joystick page as for the pad. Running QGroundControl's **Calibration** with the radio
+   gives the same result.
+
+Flying is the same as with the pad (RC Mode 2, **Position** mode), except the throttle stick does not
+spring back: keep it in the middle to hold height. PX4 reads the radio through QGroundControl as a
+joystick, so its switches do nothing (no arming or flight-mode switch): use QGroundControl for those.
+
+`make camera` skips the radio: its switches are on the axes a pad uses for the D-pad and would turn the
+view nonstop. Plug in a gamepad too to move the camera; QGroundControl keeps flying with the radio.
 
 ### Worlds
 

@@ -67,7 +67,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
-.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run \
+.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run qgc-radio \
 	check test sim reset-drone camera bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
@@ -158,6 +158,9 @@ qgc: ## QGroundControl AppImage + its libraries (sudo only if a library is missi
 qgc-run: ## Start QGroundControl (connects to the running sim by itself)
 	@if [ ! -x $(QGC_APP) ]; then echo "No QGroundControl at $(QGC_APP): run make qgc"; exit 1; fi
 	$(QGC_APP)
+
+qgc-radio: ## Set up a USB RC radio (EdgeTX/OpenTX, e.g. Radiomaster) as QGroundControl's joystick (QGC closed)
+	python3 sim/qgc_radio.py
 
 check: ## Report what is installed and what is missing (no sudo)
 	@missing=0; \

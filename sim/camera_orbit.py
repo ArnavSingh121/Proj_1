@@ -8,14 +8,20 @@
 #                     Esc or Q in that window also closes it.
 # Both read the same /dev/input/js* device, which Linux allows. Moves the camera only: the drone,
 # its sensors and RTAB-Map are not affected.
+# Uses the first gamepad plugged in. RC radios (EdgeTX/OpenTX, e.g. Radiomaster) are skipped: their
+# switches sit on the axes a pad uses for the D-pad and would turn the camera nonstop.
 # Usage: python3 sim/camera_orbit.py [--device /dev/input/js0] [--model x500_depth_0] [--world W]
 import argparse
+import glob
 import math
 import os
 import select
 import struct
 import sys
 import time
+from pathlib import Path
+
+from qgc_radio import is_radio
 
 # Linux joystick API (linux/joystick.h): struct js_event { u32 time; s16 value; u8 type; u8 number; }
 EVENT = struct.Struct('IhBB')
@@ -99,6 +105,17 @@ class Pad:
         return bool(self.hat_x or self.hat_y or self.zoom_in or self.zoom_out)
 
 
+def pick_pad(names):
+    """The device to read from {'/dev/input/jsN': name}: the first one that is not an RC radio."""
+    return next((device for device, name in sorted(names.items()) if not is_radio(name)), None)
+
+
+def joysticks():
+    """Plugged-in joysticks as {'/dev/input/jsN': name}."""
+    return {f'/dev/input/{Path(path).parent.parent.name}': Path(path).read_text().strip()
+            for path in glob.glob('/sys/class/input/js*/device/name')}
+
+
 def to_bgr(width, height, data):
     """Gazebo RGB_INT8 image bytes as the BGR array OpenCV shows."""
     import numpy
@@ -147,7 +164,7 @@ class FirstPerson:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--device', default='/dev/input/js0')
+    parser.add_argument('--device', help='joystick to read (default: the first gamepad, radios skipped)')
     parser.add_argument('--model', default='x500_depth_0')
     parser.add_argument('--world', default=os.environ.get('WORLD', 'default_warehouse'))
     args = parser.parse_args()
@@ -175,12 +192,22 @@ def main():
         node, f'/world/{args.world}/model/{args.model}/link/camera_link/sensor/IMX214/image')
     print('D-pad: orbit and height, RT/LT: zoom in/out, Y: start view, X: first person. Ctrl+C to stop.')
 
-    fd, pad, last = None, Pad(), time.monotonic()
+    fd, pad, last, waiting = None, Pad(), time.monotonic(), None
     while True:
         if fd is None:  # (re)connect: the gamepad may be unplugged and plugged back in
+            names = joysticks()
+            device = args.device or pick_pad(names)
+            if device is None:
+                radios = sorted(name for name in names.values() if is_radio(name))
+                if radios and waiting != radios:  # say it once, not every second
+                    print(f'Only a radio is plugged in ({", ".join(radios)}): it flies through QGroundControl. '
+                          'Plug in a gamepad for the camera.')
+                waiting = radios
+                time.sleep(1.0)
+                continue
             try:
-                fd, pad = os.open(args.device, os.O_RDONLY | os.O_NONBLOCK), Pad()
-                print(f'Reading {args.device}')
+                fd, pad, waiting = os.open(device, os.O_RDONLY | os.O_NONBLOCK), Pad(), None
+                print(f'Reading {device} ({names.get(device, "?")})')
             except OSError:
                 time.sleep(1.0)
                 continue
@@ -199,7 +226,7 @@ def main():
         except BlockingIOError:
             pass
         except OSError:
-            print(f'Lost {args.device}, waiting for it to come back')
+            print(f'Lost {device}, waiting for it to come back')
             os.close(fd)
             fd = None
             continue

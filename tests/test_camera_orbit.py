@@ -3,7 +3,7 @@ import math
 
 import numpy
 
-from camera_orbit import EVENT, JS_EVENT_AXIS, JS_EVENT_BUTTON, JS_EVENT_INIT, Orbit, Pad, pressed, to_bgr
+from camera_orbit import EVENT, JS_EVENT_AXIS, JS_EVENT_BUTTON, JS_EVENT_INIT, Orbit, Pad, pick_pad, pressed, to_bgr
 
 RELEASED, FULL = -32767, 32767
 
@@ -98,3 +98,11 @@ def test_gazebo_rgb_image_becomes_opencv_bgr():
     bgr = to_bgr(2, 1, bytes([255, 0, 0, 0, 0, 255]))
     assert bgr.shape == (1, 2, 3)
     assert numpy.array_equal(bgr[0, 0], [0, 0, 255]) and numpy.array_equal(bgr[0, 1], [255, 0, 0])
+
+
+def test_reads_the_first_gamepad_and_skips_rc_radios():
+    radio, pad = 'EdgeTX Radiomaster Pocket Joystick', 'Generic X-Box pad'
+    assert pick_pad({'/dev/input/js0': radio, '/dev/input/js1': pad}) == '/dev/input/js1'
+    assert pick_pad({'/dev/input/js1': pad, '/dev/input/js0': 'Other pad'}) == '/dev/input/js0'
+    assert pick_pad({'/dev/input/js0': radio}) is None
+    assert pick_pad({}) is None
