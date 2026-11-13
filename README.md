@@ -175,10 +175,10 @@ Camera, in another terminal next to the sim (`make camera`):
 ### Flying with an RC radio (Radiomaster)
 
 An EdgeTX or OpenTX radio (tested with a Radiomaster Pocket) plugged in over USB and set to **USB
-Joystick (HID)** mode works too, but not with the gamepad's settings: QGroundControl gives every new
-joystick the Xbox stick layout, which on a radio puts throttle on the right stick. The radio sends its
-channels in AETR order (right stick: roll, pitch; left stick: throttle, yaw), so it needs its own setup.
-QGroundControl keeps settings per joystick name, so the gamepad's are not touched.
+Joystick (HID)** mode works too, but not with the gamepad's settings. QGroundControl's SDL reads the
+radio as a gamepad whose left trigger is the throttle and whose right stick includes a switch, so with
+the Xbox layout QGroundControl gives every new joystick, the drone turns or flies by itself. The radio
+needs its own setup; QGroundControl keeps settings per joystick name, so the gamepad's are not touched.
 
 1. Plug the radio in and pick **USB Joystick (HID)** on its screen.
 2. Close QGroundControl, then run `make qgc-radio` (`sim/qgc_radio.py`). It writes the radio's layout
@@ -189,7 +189,8 @@ QGroundControl keeps settings per joystick name, so the gamepad's are not touche
    gives the same result.
 
 Flying is the same as with the pad (RC Mode 2, **Position** mode), except the throttle stick does not
-spring back: keep it in the middle to hold height. PX4 reads the radio through QGroundControl as a
+spring back: keep it in the middle to hold height. After QGroundControl starts, move the throttle stick
+once: until it moves, QGroundControl reads it as fully down. PX4 reads the radio through QGroundControl as a
 joystick, so its switches do nothing (no arming or flight-mode switch): use QGroundControl for those.
 
 `make camera` skips the radio: its switches are on the axes a pad uses for the D-pad and would turn the

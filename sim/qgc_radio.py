@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # Sets up an RC transmitter (EdgeTX/OpenTX radio, e.g. Radiomaster Pocket) connected over USB as
 # QGroundControl's joystick, instead of QGroundControl's default layout, which is an Xbox pad's.
-# EdgeTX sends its first 8 channels as axes in the radio's channel order, AETR by default:
-#   axis 0  roll      right stick right +       axis 2  throttle  left stick up +
-#   axis 1  pitch     right stick up +          axis 3  yaw       left stick right +
-#   axes 4-7  switches (channels 5-8)
-# The default layout puts throttle on axis 1 and pitch on axis 3, both reversed, so the right stick
-# changed the throttle. Each joystick keeps its own settings in QGroundControl (by name), so the
-# gamepad's are left as they are.
+# EdgeTX sends its first 8 channels as axes in the radio's channel order, AETR by default (as
+# /dev/input/js* shows them): 0 roll, 1 pitch, 2 throttle, 3 yaw, 4-7 switches (channels 5-8); stick
+# up/right is positive. But the SDL in QGroundControl 5.0.8 (2.0.20) has a gamepad mapping for EdgeTX
+# radios, so QGroundControl reads them as a gamepad, with these axes instead:
+#   0 leftx = roll    1 lefty = pitch    2 rightx = yaw    3 righty = channel 5 (switch)
+#   4 lefttrigger = throttle, 0 (stick down) to 32767 (up)    5 righttrigger = channel 6 (switch)
+# QGroundControl's default layout, an Xbox pad's, took switch and trigger axes for yaw and roll, so the
+# drone turned or flew on its own. Each joystick keeps its own settings in QGroundControl (by name),
+# so the gamepad's are left as they are.
 # QGroundControl writes its settings back when it exits, so it must be closed first.
 # Usage: python3 sim/qgc_radio.py [--name "EdgeTX Radiomaster Pocket Joystick"] [--settings FILE]
 import argparse
@@ -20,7 +22,8 @@ from pathlib import Path
 SETTINGS = Path.home() / '.config/QGroundControl/QGroundControl.ini'
 # Names under which radios in USB joystick mode show up.
 RADIO_MAKERS = ('EdgeTX', 'OpenTX')
-AXES = 8
+AXES = 8  # QGroundControl keeps a calibration for each of the radio's 8 axes, though it reads 6
+THROTTLE_AXIS = 4
 
 
 def is_radio(name):
@@ -28,13 +31,16 @@ def is_radio(name):
 
 
 def radio_settings():
-    """QGroundControl joystick settings for an AETR radio: calibrated full range, no axis reversed,
-    throttle from stick down (0) to stick up (full), which PX4 holds height at in the middle."""
-    settings = {'RollAxis': 0, 'PitchAxis': 1, 'ThrottleAxis': 2, 'YawAxis': 3, 'ThrottleMode': 1,
-                'Calibrated4': 'true', 'Deadband': 'false'}
+    """QGroundControl joystick settings for an AETR radio read as a gamepad (see the top): calibrated
+    full range, no axis reversed, throttle from stick down (none) to stick up (full), which PX4 holds
+    height at in the middle. The gimbal axes, unused on the x500, go to the switches, off the throttle."""
+    settings = {'RollAxis': 0, 'PitchAxis': 1, 'YawAxis': 2, 'ThrottleAxis': THROTTLE_AXIS, 'ThrottleMode': 1,
+                'GimbalPitchAxis': 3, 'GimbalYawAxis': 5, 'Calibrated4': 'true', 'Deadband': 'false'}
     for axis in range(AXES):
         settings.update({f'Axis{axis}Min': -32767, f'Axis{axis}Max': 32767, f'Axis{axis}Trim': 0,
                          f'Axis{axis}Rev': 'false', f'Axis{axis}Deadbnd': 0})
+    # A trigger axis: 0 to 32767, middle at 16384.
+    settings.update({f'Axis{THROTTLE_AXIS}Min': 0, f'Axis{THROTTLE_AXIS}Trim': 16384})
     return {key: str(value) for key, value in settings.items()}
 
 

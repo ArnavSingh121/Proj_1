@@ -46,17 +46,23 @@ def test_name_is_escaped_like_qsettings():
     assert settings_key('Pad (v2)') == 'Pad%20%28v2%29'
 
 
-def test_radio_gets_aetr_layout_without_reversed_axes():
+def test_radio_gets_aetr_layout_as_sdl_maps_it_to_a_gamepad():
+    # SDL 2.0.20's mapping: leftx:a0 (roll), lefty:a1 (pitch), rightx:a3 (yaw), lefttrigger:a2 (throttle);
+    # righty:a4 and righttrigger:a5 are switches.
     s = radio_settings()
-    assert (s['RollAxis'], s['PitchAxis'], s['ThrottleAxis'], s['YawAxis']) == ('0', '1', '2', '3')
+    assert (s['RollAxis'], s['PitchAxis'], s['YawAxis'], s['ThrottleAxis']) == ('0', '1', '2', '4')
     assert all(s[f'Axis{i}Rev'] == 'false' for i in range(8))
     assert s['ThrottleMode'] == '1'  # stick down = no throttle, as on a radio; not centered
+    # The throttle comes in as a trigger, 0..32767.
+    assert (s['Axis4Min'], s['Axis4Trim'], s['Axis4Max']) == ('0', '16384', '32767')
+    # The gimbal axes stay off the sticks.
+    assert {s['GimbalPitchAxis'], s['GimbalYawAxis']} == {'3', '5'}
 
 
 def test_apply_replaces_the_radio_keys_and_keeps_everything_else():
     out = values(apply(INI, RADIO, radio_settings()))
     before = values(INI)
-    assert out['Joysticks', KEY + 'ThrottleAxis'] == '2' and out['Joysticks', KEY + 'Axis1Rev'] == 'false'
+    assert out['Joysticks', KEY + 'ThrottleAxis'] == '4' and out['Joysticks', KEY + 'Axis1Rev'] == 'false'
     assert out['Joysticks', KEY + 'Axis7Max'] == '32767'  # added
     assert out['JoystickManager', 'ActiveJoystick'] == RADIO
     for key in [('Joysticks', 'Generic%20X-Box%20pad\\ThrottleAxis'), ('Joysticks', 'TXMode_MultiRotor'),
@@ -77,5 +83,5 @@ def test_new_keys_go_inside_their_section_and_sections_stay_apart():
 def test_apply_adds_missing_sections_and_is_idempotent():
     out = apply(['[General]', 'virtualJoystick=true'], RADIO, radio_settings())
     assert values(out)['JoystickManager', 'ActiveJoystick'] == RADIO
-    assert values(out)['Joysticks', KEY + 'YawAxis'] == '3'
+    assert values(out)['Joysticks', KEY + 'YawAxis'] == '2'
     assert apply(out, RADIO, radio_settings()) == out
