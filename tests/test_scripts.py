@@ -670,3 +670,21 @@ def test_make_qgc_run_without_qgc_says_how_to_install_it(tmp_path):
 def test_check_warns_about_the_fortress_bridge(stubs, tmp_path):
     result = check(stubs, tmp_path, installed='ros-humble-ros-gz-bridge', PX4_DIR=tmp_path)
     assert 'WARNING  ros-humble-ros-gz-bridge (Fortress) is installed' in result.stdout
+
+
+@pytest.mark.parametrize('rtabmap_running', [False, True])
+def test_make_save_octomap_exports_the_database_once_rtabmap_stopped(stubs, tmp_path, rtabmap_running):
+    stubs.add('pgrep', 'rtabmap-export')
+    out = tmp_path / 'maps' / 'w'
+    result = make('save-octomap', f'OUT={out}', 'DB=/db/rtabmap.db', f'ROS_SETUP={stubs.overlay}',
+                  env=stubs.env(STUB_PGREP_RC=0 if rtabmap_running else 1))
+    assert stubs.calls('pgrep')[0]['argv'] == ['-x', 'rtabmap']
+    if rtabmap_running:
+        assert result.returncode != 0 and 'Stop RTAB-Map first' in result.stdout
+        assert not stubs.calls('rtabmap-export')
+    else:
+        assert result.returncode == 0 and (tmp_path / 'maps').is_dir()
+        # Ray tracing on: without it the OctoMap has no free space, only occupied cells.
+        assert stubs.calls('rtabmap-export')[0]['argv'] == [
+            '--octomap', '--Grid/RayTracing', 'true', '--output_dir', f'{tmp_path}/maps/', '--output', 'w',
+            '/db/rtabmap.db']

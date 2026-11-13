@@ -123,6 +123,23 @@ make rtabmap NEW_MAP=false                  # or continue the full RTAB-Map map 
 make map-monitor                            # log map growth (known/occupied/free cells) to ~/.ros/map_growth.csv
 ```
 
+### Sending the 3D map to other groups (OctoMap `.bt`)
+
+```bash
+make save-octomap OUT=~/maps/warehouse      # ~/.ros/rtabmap.db -> ~/maps/warehouse_octomap.bt (+ .ply)
+```
+
+Run it after stopping `make rtabmap` (Ctrl+C), which writes the rest of the map to the database when it
+stops, and before the next `make rtabmap`, which starts the database over (unless `NEW_MAP=false`).
+`DB=...` exports another database. Send the `.bt`: 5 cm cells, in RTAB-Map's `map` frame (the drone's
+start pose, z up, meters), readable as a plain `OcTree` by octovis, `octomap_server` or the OctoMap
+library (its header says `ColorOcTree`, but `.bt` files hold occupancy only). The `_octomap.ply` next to
+it shows the same cells as a point cloud for MeshLab or CloudCompare. The export ray-traces free space
+(`Grid/RayTracing`): without it, only the floor would be free and everything else unknown.
+
+When visual odometry loses track, RTAB-Map starts a new map in the same database; the export covers only
+the last one. For a complete map, fly slowly and turn gently, or map with `ODOMETRY=sim`.
+
 The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map server can load it too.
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`

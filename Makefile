@@ -31,9 +31,11 @@ NEW_MAP  ?= true
 # `make rtabmap`: map update rate in Hz (odometry always runs at the camera rate). 0 = every camera frame:
 # ~3.6 GB of database in 20 min and a viewer that stalls; 1 eases the CPU on battery
 RATE     ?= 2
-# `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
+# `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml);
+# `make save-octomap`: <OUT>_octomap.bt from RTAB-Map's database DB
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml
+DB  ?= $(HOME)/.ros/rtabmap.db
 # `make test`: extra pytest arguments, e.g. make test PYTEST_ARGS='-k bridge -v'
 PYTEST_ARGS ?=
 
@@ -68,7 +70,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run qgc-radio \
-	check test sim reset-drone camera bridge rtabmap save-map load-map map-monitor zed-usb jetson-deps jetson-check jetson
+	check test sim reset-drone camera bridge rtabmap save-map save-octomap load-map map-monitor zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -212,6 +214,13 @@ rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap O
 
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
+
+# Ray tracing marks the space the camera saw through as free; without it only the floor is free.
+save-octomap: ## 3D OctoMap for other groups (<OUT>_octomap.bt, default ~/maps/map) from the last RTAB-Map run, once stopped
+	@if pgrep -x rtabmap >/dev/null; then \
+		echo "Stop RTAB-Map first (Ctrl+C in make rtabmap): it writes the rest of the map to $(DB) when it stops"; exit 1; fi
+	mkdir -p $(dir $(OUT))
+	source $(ROS_SETUP) && rtabmap-export --octomap --Grid/RayTracing true --output_dir $(dir $(OUT)) --output $(notdir $(OUT)) $(DB)
 
 load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/maps/warehouse.yaml
 	source $(ROS_SETUP) && python3 tools/load_map.py --ros-args -p map:=$(MAP)
