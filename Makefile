@@ -222,6 +222,8 @@ save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map
 save-octomap: ## 3D OctoMap for other groups (<OUT>_octomap.bt, default ~/maps/map) from the last RTAB-Map run, once stopped
 	@if pgrep -x rtabmap >/dev/null; then \
 		echo "Stop RTAB-Map first (Ctrl+C in make rtabmap): it writes the rest of the map to $(DB) when it stops"; exit 1; fi
+	@if [ -e $(OUT)_octomap.bt ]; then \
+		echo "$(OUT)_octomap.bt exists: pick another OUT=..., or delete it to replace it"; exit 1; fi
 	mkdir -p $(dir $(OUT))
 	source $(ROS_SETUP) && rtabmap-export --octomap --Grid/RayTracing true --output_dir $(dir $(OUT)) --output $(notdir $(OUT)) $(DB)
 

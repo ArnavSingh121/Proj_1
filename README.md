@@ -133,7 +133,7 @@ make save-octomap OUT=~/maps/warehouse      # ~/.ros/rtabmap.db -> ~/maps/wareho
 
 Run it after stopping `make rtabmap` (Ctrl+C), which writes the rest of the map to the database when it
 stops, and before the next `make rtabmap`, which starts the database over (unless `NEW_MAP=false`).
-`DB=...` exports another database. Send the `.bt`: 5 cm cells, in RTAB-Map's `map` frame (the drone's
+`DB=...` exports another database. It never overwrites a saved map: pick a new `OUT` for each export. Send the `.bt`: 5 cm cells, in RTAB-Map's `map` frame (the drone's
 start pose, z up, meters), readable as a plain `OcTree` by octovis, `octomap_server` or the OctoMap
 library (its header says `ColorOcTree`, but `.bt` files hold occupancy only). The `_octomap.ply` next to
 it shows the same cells as a point cloud for MeshLab or CloudCompare.

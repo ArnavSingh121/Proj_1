@@ -694,6 +694,14 @@ def test_make_save_octomap_exports_the_database_once_rtabmap_stopped(stubs, tmp_
             '/db/rtabmap.db']
 
 
+def test_make_save_octomap_never_overwrites_a_saved_map(stubs, tmp_path):
+    stubs.add('pgrep', 'rtabmap-export')
+    (tmp_path / 'w_octomap.bt').write_bytes(b'earlier map')
+    result = make('save-octomap', f'OUT={tmp_path / "w"}', f'ROS_SETUP={stubs.overlay}', env=stubs.env(STUB_PGREP_RC=1))
+    assert result.returncode != 0 and 'pick another OUT' in result.stdout
+    assert not stubs.calls('rtabmap-export') and (tmp_path / 'w_octomap.bt').read_bytes() == b'earlier map'
+
+
 def test_view_octomap_without_the_file_says_how_to_make_one(tmp_path):
     result = run([str(REPO / 'tools/view_octomap.sh'), str(tmp_path / 'none.bt')])
     assert result.returncode != 0 and 'make save-octomap' in result.stderr
