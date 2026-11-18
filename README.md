@@ -121,6 +121,7 @@ make save-map OUT=~/maps/warehouse          # current 2D occupancy grid -> wareh
 make load-map MAP=~/maps/warehouse.yaml     # publish it again on /map (latched) for other components
 make rtabmap NEW_MAP=false                  # or continue the full RTAB-Map map from its database
 make map-monitor                            # log map growth (known/occupied/free cells) to ~/.ros/map_growth.csv
+make coverage                               # live top-down view: how much of the warehouse is mapped, where is left
 ```
 
 ### Sending the 3D map to other groups (OctoMap `.bt`)
@@ -147,6 +148,12 @@ When visual odometry loses track, RTAB-Map starts a new map in the same database
 the last one. For a complete map, fly slowly and turn gently, or map with `ODOMETRY=sim`.
 
 The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map server can load it too.
+`coverage` ([`tools/coverage_monitor.py`](tools/coverage_monitor.py)) is for flying a complete map: on
+each map update it redraws a top-down picture of the warehouse in 1 m blocks, shaded by how much of each
+block's floor RTAB-Map's 2D map has seen (blank: not yet), with the drone as `@@` and the share of the
+floor seen. Fly to the blank blocks. Inside crates and shelves stays unknown, so it never reaches 100%.
+It turns red if RTAB-Map starts a new map (odometry lost track), as `make save-octomap` then exports
+only the part flown since. It knows the warehouse's walls, so it fits the sim's `default_warehouse` only.
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
 (drop `use_sim_time`).

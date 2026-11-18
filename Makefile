@@ -70,7 +70,7 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run qgc-radio \
-	check test sim reset-drone camera bridge rtabmap save-map save-octomap view-octomap load-map map-monitor zed-usb jetson-deps jetson-check jetson
+	check test sim reset-drone camera bridge rtabmap save-map save-octomap view-octomap load-map map-monitor coverage zed-usb jetson-deps jetson-check jetson
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -230,6 +230,9 @@ load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/map
 
 map-monitor: ## Log map growth to ~/.ros/map_growth.csv while RTAB-Map runs (sim time)
 	source $(ROS_SETUP) && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true
+
+coverage: ## Live top-down view of how much of the warehouse RTAB-Map has mapped, and where is left (sim)
+	source $(ROS_SETUP) && python3 tools/coverage_monitor.py --ros-args -p use_sim_time:=true
 
 zed-usb: ## Run RTAB-Map on a ZED plugged into this laptop (no NVIDIA GPU), e.g. make zed-usb FLIP=true
 	./zed_usb/run.sh flip:=$(FLIP)

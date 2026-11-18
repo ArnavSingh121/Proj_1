@@ -558,6 +558,8 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['view-octomap', 'OUT=/maps/w'], './tools/view_octomap.sh /maps/w_octomap.bt'),
     (['map-monitor'],
      'source /opt/ros/humble/setup.bash && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true'),
+    (['coverage'],
+     'source /opt/ros/humble/setup.bash && python3 tools/coverage_monitor.py --ros-args -p use_sim_time:=true'),
     (['zed-usb'], './zed_usb/run.sh flip:=false'),
     (['zed-usb', 'FLIP=true'], './zed_usb/run.sh flip:=true'),
     (['jetson', 'ZED_MODEL=zed2i'], 'ZED_MODEL=zed2i ./jetson/run.sh'),
