@@ -108,6 +108,7 @@ Options (all can be combined):
 | `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
 | `make rtabmap RATE=1` | Map updates per second (default `2`; odometry always runs at the camera rate). `1` is lighter on the CPU, e.g. on battery. `0` adds every camera frame: about 3.6 GB of database in 20 minutes, and the viewer stalls |
+| `make rtabmap VIZ=false` | No RTAB-Map viewer window. The viewer keeps every point cloud in memory (about 5 GB after 25 minutes) and can run a 16 GB machine out of memory on a long flight; the map is built the same. Watch progress with `make coverage` or RViz instead |
 
 Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
 NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a
@@ -152,8 +153,9 @@ The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map
 each map update it redraws a top-down picture of the warehouse in 1 m blocks, shaded by how much of each
 block's floor RTAB-Map's 2D map has seen (blank: not yet), with the drone as `@@` and the share of the
 floor seen. Fly to the blank blocks. Inside crates and shelves stays unknown, so it never reaches 100%.
-It turns red if RTAB-Map starts a new map (odometry lost track), as `make save-octomap` then exports
-only the part flown since. It knows the warehouse's walls, so it fits the sim's `default_warehouse` only.
+It turns red if RTAB-Map starts a new map (odometry lost track): fly over mapped ground so RTAB-Map
+recognizes it and links the maps back up, as `make save-octomap` exports only what is linked to the newest
+map. On a long flight, run `make rtabmap VIZ=false`: the viewer alone can fill 16 GB of memory. It knows the warehouse's walls, so it fits the sim's `default_warehouse` only.
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
 (drop `use_sim_time`).

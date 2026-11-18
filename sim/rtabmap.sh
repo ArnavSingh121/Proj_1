@@ -9,4 +9,6 @@ if [ -n "${ROS_OVERLAY:-}" ]; then source "$ROS_OVERLAY"; fi
 # Shared-memory transport for the camera images (see fastdds.xml); keeps a profile you set yourself.
 export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTRTPS_DEFAULT_PROFILES_FILE:-$(cd "$(dirname "$0")" && pwd)/fastdds.xml}"
 
-ros2 launch "$(cd "$(dirname "$0")" && pwd)/rtabmap.launch.py" "$@"
+# On Ctrl+C RTAB-Map writes the map still in memory to its database, which takes more than launch's
+# default 5 s once the map is large; then launch kills it mid-write. Give it a minute.
+ros2 launch "$(cd "$(dirname "$0")" && pwd)/rtabmap.launch.py" sigterm_timeout:=60 "$@"

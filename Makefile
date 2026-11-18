@@ -31,6 +31,9 @@ NEW_MAP  ?= true
 # `make rtabmap`: map update rate in Hz (odometry always runs at the camera rate). 0 = every camera frame:
 # ~3.6 GB of database in 20 min and a viewer that stalls; 1 eases the CPU on battery
 RATE     ?= 2
+# `make rtabmap`: false runs without the RTAB-Map viewer, which keeps every cloud in memory (~5 GB after
+# 25 min) and can run the machine out of memory; mapping is the same
+VIZ      ?= true
 # `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml);
 # `make save-octomap`: <OUT>_octomap.bt from RTAB-Map's database DB
 OUT ?= $(HOME)/maps/map
@@ -209,8 +212,8 @@ camera: ## Gamepad camera: orbit Gazebo's follow view (D-pad, LT/RT, Y), first p
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh
 
-rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1
-	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE)
+rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1 VIZ=false
+	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE) rtabmap_viz:=$(VIZ)
 
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)

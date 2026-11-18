@@ -5,7 +5,9 @@
 # the drone as '@@', and the share of the floor seen. Inside crates and shelves stays unknown, so 100%
 # is out of reach.
 # When visual odometry loses track, RTAB-Map starts a new map and the known area falls back; this is
-# flagged, since make save-octomap exports only the newest map.
+# flagged, since make save-octomap exports only the maps linked to the newest one. Flying over mapped
+# ground lets RTAB-Map recognize it and link the maps back up.
+# The picture only changes while RTAB-Map runs: after Ctrl+C on make rtabmap it stays as it was.
 # Usage: python3 tools/coverage_monitor.py [--ros-args -p use_sim_time:=true]   (make coverage)
 import os
 import sys
@@ -53,8 +55,9 @@ class CoverageMonitor(Node):
                  'x -15 to +15 m left to right, y +7.7 (top) to -7.9 m (bottom), 1 m blocks.',
                  'Floor seen per block:  ░░ <50%   ▒▒ <90%   ██ 90%+   blank: not yet   @@ drone']
         if self.restarts:
-            lines.append(f'\033[31mRTAB-Map started a new map at {", ".join(self.restarts)} (odometry lost track):'
-                         ' make save-octomap exports only the newest one.\033[0m')
+            lines.append(f'\033[31mRTAB-Map started a new map at {", ".join(self.restarts)} (odometry lost track). '
+                         'Fly over mapped ground so it links the maps back up (the view fills in again): '
+                         'make save-octomap exports only what is linked to the newest map.\033[0m')
         print('\n'.join(lines), flush=True)
 
 

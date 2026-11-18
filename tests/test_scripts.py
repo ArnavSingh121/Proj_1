@@ -342,7 +342,8 @@ def test_launcher_runs_its_launch_file_by_absolute_path(stubs, tmp_path, script,
     stubs.add('ros2')
     result = run([str(REPO / script), *args], env=stubs.env(ROS_OVERLAY=stubs.overlay), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert ros2_call(stubs)['argv'] == ['launch', str(REPO / launch_file), *args]
+    # sigterm_timeout: time for RTAB-Map to save the map on Ctrl+C before launch kills it
+    assert ros2_call(stubs)['argv'] == ['launch', str(REPO / launch_file), 'sigterm_timeout:=60', *args]
 
 
 @needs_ros_setup
@@ -382,7 +383,7 @@ def test_make_zed_usb_passes_flip(stubs):
     stubs.add('ros2')
     env = stubs.env(ROS_OVERLAY=stubs.overlay)
     assert run(['make', '--no-print-directory', 'zed-usb', 'FLIP=true'], env=env).returncode == 0
-    assert ros2_call(stubs)['argv'][2:] == ['flip:=true']
+    assert ros2_call(stubs)['argv'][2:] == ['sigterm_timeout:=60', 'flip:=true']
 
 
 def test_jetson_run_requires_zed_model(stubs):
@@ -404,7 +405,7 @@ def test_jetson_run_launches_with_the_camera_model_and_extra_args(stubs, tmp_pat
                  env=stubs.env(ZED_MODEL='zed2i', ZED_WS=ws), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert ros2_call(stubs)['argv'] == ['launch', str(REPO / 'jetson/zed_rtabmap.launch.py'),
-                                        'camera_model:=zed2i', 'fcu_url:=/dev/ttyACM0:57600']
+                                        'camera_model:=zed2i', 'sigterm_timeout:=60', 'fcu_url:=/dev/ttyACM0:57600']
 
 
 def test_jetson_run_fails_without_a_built_wrapper(stubs, tmp_path):
@@ -546,9 +547,9 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['bridge'], './sim/bridge.sh'),
     (['reset-drone', 'PX4_DIR=/px4'], './sim/reset_drone.sh /px4'),
     (['camera'], 'PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py'),
-    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=2'),
-    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1'],
-     './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1'),
+    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=2 rtabmap_viz:=true'),
+    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1', 'VIZ=false'],
+     './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1 rtabmap_viz:=false'),
     (['save-map', 'OUT=/maps/w'],
      'source /opt/ros/humble/setup.bash && python3 tools/save_map.py --ros-args -p out:=/maps/w'),
     (['load-map', 'MAP=/maps/w.yaml'],

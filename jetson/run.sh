@@ -7,4 +7,6 @@ set -eo pipefail
 source /opt/ros/humble/setup.bash
 source "${ZED_WS:-$HOME/zed_ws}/install/setup.bash"
 
-ros2 launch "$(cd "$(dirname "$0")" && pwd)/zed_rtabmap.launch.py" camera_model:="$ZED_MODEL" "$@"
+# On Ctrl+C RTAB-Map writes the map still in memory to its database, which takes more than launch's
+# default 5 s once the map is large; then launch kills it mid-write. Give it a minute.
+ros2 launch "$(cd "$(dirname "$0")" && pwd)/zed_rtabmap.launch.py" camera_model:="$ZED_MODEL" sigterm_timeout:=60 "$@"
