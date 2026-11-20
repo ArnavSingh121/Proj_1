@@ -16,6 +16,7 @@ export GZ_IP="${GZ_IP:-127.0.0.1}"
 MODEL=x500_depth_0
 CAM=/world/$WORLD/model/$MODEL/link/camera_link/sensor/IMX214
 IMU=/world/$WORLD/model/$MODEL/link/base_link/sensor/imu_sensor/imu
+GT=/ground_truth/odometry_with_covariance  # set in sim/models/x500_depth (kept away from PX4)
 CONFIG="${XDG_RUNTIME_DIR:-/tmp}/proj1_bridge_$WORLD.yaml"
 
 # Every topic is lazy: converted only while something subscribes to it. The bridge converts on a single
@@ -32,7 +33,7 @@ bridge() {  # gz_topic ros_topic ros_type gz_type
   bridge "$CAM/image" /uav/rgb/image sensor_msgs/msg/Image gz.msgs.Image
   bridge "$CAM/camera_info" /uav/rgb/camera_info sensor_msgs/msg/CameraInfo gz.msgs.CameraInfo
   bridge /lidar_points/points /uav/lidar/points sensor_msgs/msg/PointCloud2 gz.msgs.PointCloudPacked
-  bridge "/model/$MODEL/odometry_with_covariance" /uav/odom nav_msgs/msg/Odometry gz.msgs.OdometryWithCovariance
+  bridge "$GT" /uav/odom nav_msgs/msg/Odometry gz.msgs.OdometryWithCovariance
   bridge "$IMU" /uav/imu sensor_msgs/msg/Imu gz.msgs.IMU
   bridge "/world/$WORLD/clock" /clock rosgraph_msgs/msg/Clock gz.msgs.Clock
 } > "$CONFIG"

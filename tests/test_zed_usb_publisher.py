@@ -367,7 +367,7 @@ def test_node_opens_the_camera_and_sets_up_stereo(make_node, log):
     (device, api, cap), = opened
     assert (device, api) == ('/dev/video7', cv2.CAP_V4L2)
     assert (cap.props[cv2.CAP_PROP_FRAME_WIDTH], cap.props[cv2.CAP_PROP_FRAME_HEIGHT],
-            cap.props[cv2.CAP_PROP_FPS]) == (1344, 376, 15)
+            cap.props[cv2.CAP_PROP_FPS]) == (1344, 376, 30)
     assert (node.w, node.h, node.flip) == (W, H, False)
     # depth = fx * baseline / disparity, baseline 119.93 mm from the calibration file.
     assert node.fx_baseline == pytest.approx(node.P[0, 0] * 0.11993, rel=1e-6)

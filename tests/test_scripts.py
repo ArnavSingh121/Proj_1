@@ -318,10 +318,13 @@ def test_bridge_gazebo_topics_match_the_world_and_the_models(stubs, world):
     camera_link = oakd.find('.//link').get('name')
     assert gz['/uav/rgb/image'] == f'/world/{world}/model/{model}/link/{camera_link}/sensor/{rgb_sensor.get("name")}/image'
     assert gz['/uav/rgb/camera_info'] == gz['/uav/rgb/image'].replace('/image', '/camera_info')
-    # The depth sensor publishes on its <topic>; OdometryPublisher on /model/<name>/odometry_with_covariance.
+    # The depth sensor publishes on its <topic>; OdometryPublisher on the topic set in x500_depth, away from
+    # its default /model/<name>/odometry_with_covariance, which PX4 would read as external vision.
     assert gz['/uav/depth/image'] == '/' + oakd.find(".//sensor[@type='depth_camera']/topic").text
     assert gz['/uav/points'] == gz['/uav/depth/image'] + '/points'
-    assert gz['/uav/odom'] == f'/model/{model}/odometry_with_covariance'
+    x500 = ET.parse(REPO / 'sim/models/x500_depth/model.sdf').getroot()
+    assert gz['/uav/odom'] == x500.find('.//plugin/odom_covariance_topic').text
+    assert gz['/uav/odom'] != f'/model/{model}/odometry_with_covariance'
     assert gz['/uav/imu'] == f'/world/{world}/model/{model}/link/base_link/sensor/imu_sensor/imu'
     assert gz['/clock'] == f'/world/{world}/clock'
     # gpu_lidar publishes a LaserScan on <topic> and the 3D cloud on <topic>/points.
@@ -718,3 +721,72 @@ def test_octomap_rviz_shows_the_topics_the_viewer_publishes_in_its_frame():
     # octomap_server publishes once, latched: a volatile subscription would show nothing.
     assert all(d['Topic']['Durability Policy'] == 'Transient Local' for d in markers.values())
     assert 'publish_free_space:=true' in script and 'use_height_map:=true' in script
+
+
+# ---- tools/replay_flight.sh ----
+
+# The stub logs each call and keeps `ros2 launch` running for a moment, as RTAB-Map would, so the player
+# (started in the background) gets to run before the script ends.
+REPLAY_STUB = ('echo "$*" >> "$(dirname "$0")/../log/ros2.txt"\n'
+               'if [ "$1" = bag ]; then echo "$FASTRTPS_DEFAULT_PROFILES_FILE" > "$(dirname "$0")/../log/profile.txt"; fi\n'
+               'if [ "$1" = launch ]; then sleep 1; fi\n')
+
+
+def recorded_flight(tmp_path, topic):
+    folder = tmp_path / 'flight_recordings' / '2026-11-10_14-03-22'
+    (folder / 'bag').mkdir(parents=True)
+    (folder / 'bag' / 'metadata.yaml').write_text(
+        'rosbag2_bagfile_information:\n  topics_with_message_count:\n'
+        f'    - topic_metadata:\n        name: {topic}\n')
+    return folder.resolve()
+
+
+def replay(stubs, tmp_path, *args, sim_running=False):
+    stubs.add('ros2', script=REPLAY_STUB).add('pgrep', script='exit 0\n' if sim_running else 'exit 1\n')
+    env = stubs.env(ROS_OVERLAY=stubs.overlay, FLIGHT_RECORDINGS=tmp_path / 'flight_recordings', REPLAY_DELAY=0)
+    return run([str(REPO / 'tools/replay_flight.sh'), *args], env=env)
+
+
+@needs_ros_setup
+@pytest.mark.parametrize('topic, launch, launch_args, clock', [
+    ('/uav/rgb/image', 'sim/rtabmap.launch.py', ['flight_recorder:=false'], []),
+    ('/zed/zed_node/rgb/color/rect/image', 'zed_usb/zed_usb_rtabmap.launch.py',
+     ['camera:=false', 'use_sim_time:=true'], ['--clock', '100']),
+], ids=['simulated flight', 'drone flight'])
+def test_replay_flight_uses_the_launch_file_and_topics_of_the_recording(stubs, tmp_path, topic, launch,
+                                                                       launch_args, clock):
+    folder = recorded_flight(tmp_path, topic)
+    result = replay(stubs, tmp_path, folder.name, '2')
+    assert result.returncode == 0, result.stderr
+    calls = (stubs.log / 'ros2.txt').read_text().splitlines()
+    # Never into the recorded map: a fresh replay.db next to it. A simulated replay must not record itself.
+    # sigterm_timeout comes from the launcher scripts: RTAB-Map gets time to save on Ctrl+C.
+    assert (f'launch {REPO / launch} sigterm_timeout:=60 {" ".join(launch_args)} new_map:=true '
+            f'database_path:={folder}/replay.db') in calls
+    play = next(c for c in calls if c.startswith('bag play'))
+    assert play.startswith(f'bag play {folder}/bag --topics ')
+    assert topic in play
+    assert play.endswith(' '.join(clock + ['--rate', '2', '--disable-keyboard-controls']))
+    # The player sends the images: without the shared-memory profile they crawl over UDP.
+    assert (stubs.log / 'profile.txt').read_text().strip() == str(REPO / 'sim/fastdds.xml')
+
+
+@needs_ros_setup
+def test_replay_flight_defaults_to_the_latest_flight(stubs, tmp_path):
+    folder = recorded_flight(tmp_path, '/uav/rgb/image')
+    (folder.parent / 'latest').symlink_to(folder.name)
+    assert replay(stubs, tmp_path).returncode == 0
+    assert f'database_path:={folder}/replay.db' in (stubs.log / 'ros2.txt').read_text()
+
+
+def test_replay_flight_refuses_while_the_simulation_runs(stubs, tmp_path):
+    folder = recorded_flight(tmp_path, '/uav/rgb/image')
+    result = replay(stubs, tmp_path, folder.name, sim_running=True)
+    assert result.returncode == 1 and 'simulation is running' in result.stderr
+    assert not (stubs.log / 'ros2.txt').exists()
+
+
+def test_replay_flight_explains_a_missing_or_unfinished_recording(stubs, tmp_path):
+    assert 'no flight' in replay(stubs, tmp_path, 'nope').stderr
+    (tmp_path / 'flight_recordings' / 'cut').mkdir(parents=True)  # power cut: the bag never closed
+    assert 'no closed recording' in replay(stubs, tmp_path, 'cut').stderr

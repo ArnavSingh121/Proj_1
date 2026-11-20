@@ -42,6 +42,9 @@ RAY_TRACING ?= false
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml
 DB  ?= $(HOME)/.ros/rtabmap.db
+# `make replay-flight`: which recorded flight (folder name, path or latest) and how fast
+FLIGHT ?= latest
+SPEED ?= 1.0
 # `make test`: extra pytest arguments, e.g. make test PYTEST_ARGS='-k bridge -v'
 PYTEST_ARGS ?=
 
@@ -76,7 +79,8 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
 .PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run qgc-radio \
-	check test sim reset-drone camera bridge rtabmap save-map save-octomap view-octomap load-map map-monitor coverage zed-usb jetson-deps jetson-check jetson
+	check test sim reset-drone camera bridge rtabmap mavros save-map save-octomap view-octomap load-map map-monitor \
+	coverage replay-flight zed-usb jetson-deps jetson-check jetson jetson-verify jetson-autostart
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -218,6 +222,10 @@ bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1 VIZ=false RAY_TRACING=true
 	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE) rtabmap_viz:=$(VIZ) ray_tracing:=$(RAY_TRACING)
 
+mavros: ## Run MAVROS for the simulated PX4, on sim time (terminal 4); the flight recorder needs it
+	source $(ROS_SETUP) && if [ -n "$$ROS_OVERLAY" ]; then source "$$ROS_OVERLAY"; fi && \
+		ros2 launch $(CURDIR)/sim/mavros.launch.py
+
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
 
@@ -237,6 +245,9 @@ view-octomap: ## Show an OctoMap .bt in RViz (default ~/maps/map_octomap.bt), e.
 load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/maps/warehouse.yaml
 	source $(ROS_SETUP) && python3 tools/load_map.py --ros-args -p map:=$(MAP)
 
+replay-flight: ## Replay a recorded flight through RTAB-Map, e.g. make replay-flight FLIGHT=latest SPEED=2
+	./tools/replay_flight.sh $(FLIGHT) $(SPEED)
+
 map-monitor: ## Log map growth to ~/.ros/map_growth.csv while RTAB-Map runs (sim time)
 	source $(ROS_SETUP) && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true
 
@@ -255,3 +266,13 @@ jetson-check: ## (Jetson) Report what is installed / missing (no sudo)
 
 jetson: ## (Jetson) Run ZED + RTAB-Map + MAVROS, e.g. make jetson ZED_MODEL=zed2i
 	ZED_MODEL=$(ZED_MODEL) ./jetson/run.sh
+
+jetson-verify: ## (Jetson) While `make jetson` runs: depth is the ZED SDK's and every bridge has data
+	source $(ROS_SETUP) && python3 ./jetson/verify.py
+
+jetson-autostart: ## (Jetson) Start mapping at every power-on (sudo), e.g. make jetson-autostart ZED_MODEL=zed2i
+	@[ -n "$(ZED_MODEL)" ] || { echo "usage: make jetson-autostart ZED_MODEL=zed2i"; exit 1; }
+	sed -e 's|@USER@|$(shell id -un)|' -e 's|@HOME@|$(HOME)|' -e 's|@ZED_MODEL@|$(ZED_MODEL)|' \
+		-e 's|@REPO@|$(CURDIR)|' jetson/proj1-mapping.service | sudo tee /etc/systemd/system/proj1-mapping.service >/dev/null
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now proj1-mapping

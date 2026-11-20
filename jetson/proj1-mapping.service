@@ -1,0 +1,18 @@
+# Starts the mapping stack when the drone powers on (installed by `make jetson-autostart`).
+[Unit]
+Description=Proj_1 drone mapping: ZED, RTAB-Map, MAVROS and a saved map of every flight
+After=network.target
+
+[Service]
+User=@USER@
+Environment=HOME=@HOME@
+Environment=ZED_MODEL=@ZED_MODEL@
+ExecStart=@REPO@/jetson/run.sh
+# SIGINT is what ros2 launch handles to close RTAB-Map and the flight map properly.
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

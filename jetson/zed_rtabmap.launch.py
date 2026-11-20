@@ -3,7 +3,7 @@
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import (
     AnyLaunchDescriptionSource, PythonLaunchDescriptionSource)
@@ -16,6 +16,11 @@ ZED = '/zed/zed_node/'  # topic root of zed_wrapper v5 (camera_name 'zed', node_
 # own props and legs never count as obstacles (same values as sim/rtabmap.launch.py).
 ODOM_SELF_FILTER = '--Vis/MinDepth 0.3'
 SELF_FILTER = '--Grid/RangeMin 0.3 ' + ODOM_SELF_FILTER
+# What tools/flight_recorder.py records from arm to disarm: the ZED (enough to replay a flight through
+# RTAB-Map on a laptop: tools/replay_flight.sh) and our outputs.
+RECORD_TOPICS = [ZED + 'rgb/color/rect/image', ZED + 'rgb/color/rect/camera_info', ZED + 'depth/depth_registered',
+                 ZED + 'depth/camera_info', ZED + 'imu/data', ZED + 'odom', '/tf', '/tf_static', '/rtabmap/odom',
+                 '/rtabmap/mapPath', '/mavros/local_position/pose']
 
 
 def generate_launch_description():
@@ -45,6 +50,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fcu_url', default_value='/dev/ttyTHS1:921600',
             description='PX4 link: Jetson UART on TELEM2 by default; /dev/ttyACM0:57600 for USB'),
+        DeclareLaunchArgument(
+            'flight_recorder', default_value='true',
+            description="'true' records every flight, with its map, to ~/flight_recordings "
+                        "(tools/flight_recorder.py)"),
     ]
 
     zed = IncludeLaunchDescription(
@@ -94,4 +103,12 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('mavros')),
     )
 
-    return LaunchDescription(args + [zed, rtabmap, mavros])
+    flight_recorder = ExecuteProcess(
+        cmd=['python3', os.path.join(HERE, '..', 'tools', 'flight_recorder.py'), '--ros-args',
+             '-p', ['database:=', LaunchConfiguration('database_path')], '-p', 'topics:=' + ' '.join(RECORD_TOPICS)],
+        output='screen',
+        respawn=True, respawn_delay=1.0,
+        condition=IfCondition(LaunchConfiguration('flight_recorder')),
+    )
+
+    return LaunchDescription(args + [zed, rtabmap, mavros, flight_recorder])
