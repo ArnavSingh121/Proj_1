@@ -56,7 +56,7 @@ Our drone needs custom Gazebo models, in [`sim/models/`](sim/models):
 | Model | Change |
 |---|---|
 | `x500_depth` | Adds the OdometryPublisher plugin (ground-truth odometry, 3D) and a 3D lidar. The odometry goes to `/ground_truth/odometry_with_covariance`: on its default topic PX4 would read it as external vision, i.e. be handed the true position |
-| `OakD-Lite` | 640x480 RGB + depth, frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
+| `OakD-Lite` | 640x480 RGB + depth at 15 Hz (30 is more than Gazebo can render here), frame id `camera_optical_frame`; RGB field of view matches the depth camera (1.274 rad) so the two images line up pixel for pixel |
 | `lidar_3d` | 3D lidar model (not in stock PX4) |
 | `depot` | Warehouse building, shelves and crates of the `default_warehouse` world (not in stock PX4; Open Robotics, from Gazebo Fuel) |
 | `person` | Standing person, placed 3 times in `default_warehouse` (not in stock PX4; Marina Kollmitz, from Gazebo Fuel) |
@@ -71,13 +71,18 @@ make models   # same as ./sim/install_models.sh ~/PX4-Autopilot
 
 ## Running the simulation
 
-Terminal 1 starts PX4 + Gazebo. The first start can take a minute or two.
+Terminal 1 starts PX4 + Gazebo. The first start can take a minute or two. On a laptop with an NVIDIA
+GPU (driver working, `nvidia-smi` runs) Gazebo renders on it; `GPU=integrated make sim` keeps the
+default GPU. Without that, a hybrid-graphics laptop renders on the integrated GPU and the sim crawls.
 
 ```bash
 make sim      # same as ./sim/launch_sim.sh ~/PX4-Autopilot
+make qgc-run  # QGroundControl (another terminal); connects to the sim by itself
 ```
 
 Terminal 2 starts the Gazebo → ROS 2 bridge. Leave it running.
+`make bridge` and `make rtabmap` use [`sim/fastdds.xml`](sim/fastdds.xml), a Fast DDS profile with shared memory:
+with `ROS_LOCALHOST_ONLY=1` alone, the 1 MB camera images go over UDP and reach RTAB-Map at a few Hz.
 
 ```bash
 make bridge   # same as ./sim/bridge.sh
@@ -85,6 +90,12 @@ make bridge   # same as ./sim/bridge.sh
 
 Terminal 3 starts RTAB-Map (RGB-D SLAM with its own visual odometry) and its viewer.
 Fly the drone (QGroundControl, or `commander takeoff` in the PX4 shell) to build the map.
+PX4 refuses to arm until QGroundControl is connected; `make sim NO_GCS=true` lets `commander takeoff`
+work without it (sim only: it also turns off the return-home failsafe on GCS link loss).
+After a crash, `make reset-drone` puts the drone back upright at its start point, disarmed, without
+restarting anything (Gazebo's own reset button deletes the drone; then only restarting `make sim` helps).
+To fly with a gamepad and move the camera with it, see [Flying with a gamepad](#flying-with-a-gamepad);
+with an RC radio, [Flying with an RC radio](#flying-with-an-rc-radio-radiomaster).
 
 ```bash
 make rtabmap  # same as ./sim/rtabmap.sh; map database: ~/.ros/rtabmap.db (reset each start)
@@ -97,6 +108,9 @@ Options (all can be combined):
 | `make rtabmap ODOMETRY=sim` | Use Gazebo's simulated odometry (`/uav/odom`) instead of RTAB-Map's visual odometry. It is ground truth, so use `visual` (default) when measuring localization accuracy |
 | `make rtabmap LIDAR=true` | Also feed the simulated 3D lidar (`/uav/lidar/points`) to RTAB-Map; the occupancy grid then uses both lidar and depth |
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
+| `make rtabmap RATE=1` | Map updates per second (default `2`; odometry always runs at the camera rate). `1` is lighter on the CPU, e.g. on battery. `0` adds every camera frame: about 3.6 GB of database in 20 minutes, and the viewer stalls |
+| `make rtabmap VIZ=false` | No RTAB-Map viewer window. The viewer keeps every point cloud in memory (about 5 GB after 25 minutes) and can run a 16 GB machine out of memory on a long flight; the map is built the same. Watch progress with `make coverage` or RViz instead |
+| `make rtabmap RAY_TRACING=true` | Mark free space along each depth ray while mapping (`Grid/RayTracing`), so the live 3D map (`/rtabmap/octomap_full`) tells free from unknown, as other groups' planners need. `make save-octomap` already does this when exporting; this makes the live map match |
 
 Terminal 4 starts MAVROS, which links ROS 2 to PX4. The flight recorder (below) needs it to see the drone
 arm and disarm. It runs on sim time ([`sim/mavros.launch.py`](sim/mavros.launch.py)), because otherwise its
@@ -118,12 +132,111 @@ make save-map OUT=~/maps/warehouse          # current 2D occupancy grid -> wareh
 make load-map MAP=~/maps/warehouse.yaml     # publish it again on /map (latched) for other components
 make rtabmap NEW_MAP=false                  # or continue the full RTAB-Map map from its database
 make map-monitor                            # log map growth (known/occupied/free cells) to ~/.ros/map_growth.csv
+make coverage                               # live top-down view: how much of the warehouse is mapped, where is left
 ```
 
+### Sending the 3D map to other groups (OctoMap `.bt`)
+
+```bash
+make save-octomap OUT=~/maps/warehouse      # ~/.ros/rtabmap.db -> ~/maps/warehouse_octomap.bt (+ .ply)
+```
+
+Run it after stopping `make rtabmap` (Ctrl+C), which writes the rest of the map to the database when it
+stops, and before the next `make rtabmap`, which starts the database over (unless `NEW_MAP=false`).
+`DB=...` exports another database. It never overwrites a saved map: pick a new `OUT` for each export. Send the `.bt`: 5 cm cells, in RTAB-Map's `map` frame (the drone's
+start pose, z up, meters), readable as a plain `OcTree` by octovis, `octomap_server` or the OctoMap
+library (its header says `ColorOcTree`, but `.bt` files hold occupancy only). The `_octomap.ply` next to
+it shows the same cells as a point cloud for MeshLab or CloudCompare.
+
+To look at a `.bt`, `make view-octomap OUT=~/maps/warehouse` (or `OUT=` the `.bt` file itself) ([`tools/view_octomap.sh`](tools/view_octomap.sh),
+or `./tools/view_octomap.sh file.bt`) opens it in RViz: the occupied cells colored by height (purple at
+the floor to red at the top), a 1 m grid and the start pose. Tick **Free cells** to see the free space too.
+Closing RViz stops it. For the full map in color, with the camera images and the drone's path, open the
+database instead: `rtabmap-databaseViewer ~/.ros/rtabmap.db`, then Edit → View 3D map. The export ray-traces free space
+(`Grid/RayTracing`): without it, only the floor would be free and everything else unknown.
+
+When visual odometry loses track, RTAB-Map starts a new map in the same database; the export covers only
+the last one. For a complete map, fly slowly and turn gently, or map with `ODOMETRY=sim`.
+
 The `.pgm` + `.yaml` pair is the standard ROS `map_server` format, so nav2's map server can load it too.
+`coverage` ([`tools/coverage_monitor.py`](tools/coverage_monitor.py)) is for flying a complete map: on
+each map update it redraws a top-down picture of the warehouse in 1 m blocks, shaded by how much of each
+block's floor RTAB-Map's 2D map has seen (blank: not yet), with the drone as `@@` and the share of the
+floor seen. Fly to the blank blocks. Inside crates and shelves stays unknown, so it never reaches 100%.
+It turns red if RTAB-Map starts a new map (odometry lost track): fly over mapped ground so RTAB-Map
+recognizes it and links the maps back up, as `make save-octomap` exports only what is linked to the newest
+map. On a long flight, run `make rtabmap VIZ=false`: the viewer alone can fill 16 GB of memory. It knows the warehouse's walls, so it fits the sim's `default_warehouse` only.
 `map-monitor` adds a row per map update, which shows the map growing during a flight and lets runs
 be compared. On the Jetson or with `zed-usb`, run the same scripts with `python3 tools/<script>.py`
 (drop `use_sim_time`).
+
+### Flying with a gamepad
+
+The sticks fly the drone through QGroundControl; `make camera` moves the view with the buttons
+QGroundControl leaves free. Any Xbox-style pad works (tested with a PowerA Xbox Series X wired pad).
+
+One-time setup, per person (stored in your own QGroundControl settings, not in the repo):
+
+1. Plug the pad in, then start QGroundControl (`make qgc-run`). If the pad does not show up, restart
+   QGroundControl with the pad connected.
+2. Vehicle Configuration → **Joystick** (the page only appears while a pad is connected and the sim is
+   running): turn on **Enable joystick input**, pick **RC Mode 2**, and run **Calibration**.
+3. On the General tab, check the sliders: left stick up moves only Throttle, left/right only Yaw,
+   right stick up/down only Pitch, left/right only Roll. If not, calibrate again.
+
+No pad? Application Settings → Fly View → **Virtual Joystick** gives on-screen sticks instead.
+
+Flying (RC Mode 2):
+
+- Take off with `commander takeoff` in the PX4 shell or from QGroundControl, then set the flight mode
+  to **Position**: the drone holds its place and height when the sticks are centered. In Hold,
+  Takeoff or Mission mode PX4 flies itself and ignores the sticks.
+- Left stick: up/down climbs/descends, left/right turns (at most 60 deg/s, see `launch_sim.sh`).
+  Right stick: forward/back and sideways.
+- Fly slowly and turn gently: fast turns make RTAB-Map's visual odometry lose track.
+- Crashed or flipped: `make reset-drone`. Not Gazebo's reset button, which deletes the drone.
+
+Camera, in another terminal next to the sim (`make camera`):
+
+| Pad | Gazebo view |
+|---|---|
+| D-pad left / right | Orbit around the drone |
+| D-pad up / down | Camera higher / lower |
+| RT / LT | Zoom in / out (press harder: faster) |
+| Y | Back to the start view |
+| X | First person on/off: a window with the drone's own RGB camera (what RTAB-Map sees, 15 Hz). Esc or Q in the window also closes it; its close button does not |
+
+- The Gazebo view camera itself cannot look forward from the drone, hence the separate window.
+- It reads the first gamepad plugged in and skips RC radios (see below). Several pads plugged in?
+  Pick yours: `python3 sim/camera_orbit.py --device /dev/input/js1`.
+- Pads with another layout (PlayStation, ...) may number their buttons differently; the script
+  expects the Xbox layout of the Linux `xpad` driver (D-pad axes 6/7, triggers 2/5, X/Y buttons 2/3).
+- If you assigned QGroundControl actions to the D-pad, triggers, X or Y, both programs react to the
+  same press: clear them under Joystick → Button Assignment.
+
+### Flying with an RC radio (Radiomaster)
+
+An EdgeTX or OpenTX radio (tested with a Radiomaster Pocket) plugged in over USB and set to **USB
+Joystick (HID)** mode works too, but not with the gamepad's settings. QGroundControl's SDL reads the
+radio as a gamepad whose left trigger is the throttle and whose right stick includes a switch, so with
+the Xbox layout QGroundControl gives every new joystick, the drone turns or flies by itself. The radio
+needs its own setup; QGroundControl keeps settings per joystick name, so the gamepad's are not touched.
+
+1. Plug the radio in and pick **USB Joystick (HID)** on its screen.
+2. Close QGroundControl, then run `make qgc-radio` (`sim/qgc_radio.py`). It writes the radio's layout
+   to `~/.config/QGroundControl/QGroundControl.ini` (previous copy: `QGroundControl.ini.bak`) and makes
+   it the active joystick. QGroundControl must be closed, as it writes its settings back when it exits.
+3. Start QGroundControl (`make qgc-run`); turn on **Enable joystick input** if needed, then check the
+   sliders on the Joystick page as for the pad. Running QGroundControl's **Calibration** with the radio
+   gives the same result.
+
+Flying is the same as with the pad (RC Mode 2, **Position** mode), except the throttle stick does not
+spring back: keep it in the middle to hold height. After QGroundControl starts, move the throttle stick
+once: until it moves, QGroundControl reads it as fully down. PX4 reads the radio through QGroundControl as a
+joystick, so its switches do nothing (no arming or flight-mode switch): use QGroundControl for those.
+
+`make camera` skips the radio: its switches are on the axes a pad uses for the D-pad and would turn the
+view nonstop. Plug in a gamepad too to move the camera; QGroundControl keeps flying with the radio.
 
 ### Every flight is recorded, with its map
 
@@ -231,6 +344,8 @@ make zed-usb              # camera upright
 make zed-usb FLIP=true    # camera upside down (images turned, left/right swapped)
 ```
 
+- Like the sim, it uses [`sim/fastdds.xml`](sim/fastdds.xml) (shared memory): over UDP the images reach
+  RTAB-Map late and in bursts once the CPU is busy, odometry loses track and the map splits into pieces.
 - Depth is classic stereo matching, not the SDK's neural depth: expect holes on plain walls/ceilings.
 - VGA (672x376), about 30 Hz out of the publisher and 15 Hz into RTAB-Map. No IMU (that needs the SDK).
 - The publisher's node is `zed_usb` (the wrapper's is `/zed/zed_node`), with the wrapper's topics. It

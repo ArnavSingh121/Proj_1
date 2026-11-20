@@ -20,15 +20,28 @@ QGC_URL  ?= https://github.com/mavlink/qgroundcontrol/releases/download/v5.0.8/Q
 QGC_APP  ?= $(HOME)/QGroundControl-v5.0.8-x86_64.AppImage
 # ZED camera model on the drone, for `make jetson` (zed, zedm, zed2, zed2i, zedx, zedxm, ...)
 ZED_MODEL ?=
+# `make sim`: true lets PX4 arm without QGroundControl (pxh> commander takeoff)
+NO_GCS ?= false
 # `make zed-usb`: true if the ZED is upside down
 FLIP ?= false
 # `make rtabmap`: odometry source (visual | sim), simulated 3D lidar (true | false), fresh map or reload
 ODOMETRY ?= visual
 LIDAR    ?= false
 NEW_MAP  ?= true
-# `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml)
+# `make rtabmap`: map update rate in Hz (odometry always runs at the camera rate). 0 = every camera frame:
+# ~3.6 GB of database in 20 min and a viewer that stalls; 1 eases the CPU on battery
+RATE     ?= 2
+# `make rtabmap`: false runs without the RTAB-Map viewer, which keeps every cloud in memory (~5 GB after
+# 25 min) and can run the machine out of memory; mapping is the same
+VIZ      ?= true
+# `make rtabmap`: true marks free space along each depth ray while mapping, so the live 3D map
+# (/rtabmap/octomap_full) tells free from unknown, as `make save-octomap` already does on export
+RAY_TRACING ?= false
+# `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml);
+# `make save-octomap`: <OUT>_octomap.bt from RTAB-Map's database DB
 OUT ?= $(HOME)/maps/map
 MAP ?= $(OUT).yaml
+DB  ?= $(HOME)/.ros/rtabmap.db
 # `make replay-flight`: which recorded flight (folder name, path or latest) and how fast
 FLIGHT ?= latest
 SPEED ?= 1.0
@@ -65,9 +78,9 @@ QGC_PKGS := gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
 
 ALL_PKGS := $(BASE_PKGS) $(ROS_PKGS) $(GZ_PKGS) $(SLAM_PKGS) $(QGC_PKGS)
 
-.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc \
-	check test sim bridge rtabmap mavros save-map load-map map-monitor replay-flight zed-usb jetson-deps \
-	jetson-check jetson jetson-verify jetson-autostart
+.PHONY: help deps not-jetson base ros-repo gz-repo ros gazebo slam mavros-geo px4 models qgc qgc-run qgc-radio \
+	check test sim reset-drone camera bridge rtabmap mavros save-map save-octomap view-octomap load-map map-monitor \
+	coverage replay-flight zed-usb jetson-deps jetson-check jetson jetson-verify jetson-autostart
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -143,14 +156,23 @@ px4: base ## Clone PX4 at PX4_REF, run its setup script, build SITL
 models: ## Copy our custom Gazebo models and worlds (sim/models, sim/worlds) into PX4
 	./sim/install_models.sh $(PX4_DIR)
 
-qgc: ## QGroundControl AppImage + its libraries
-	sudo apt-get install -y $(QGC_PKGS)
+qgc: ## QGroundControl AppImage + its libraries (sudo only if a library is missing)
+	@missing=$$(for p in $(QGC_PKGS); do dpkg -s $$p >/dev/null 2>&1 || echo $$p; done); \
+	if [ -n "$$missing" ]; then sudo apt-get install -y $$missing; \
+	else echo "QGroundControl libraries already installed"; fi
 	@if [ -f $(QGC_APP) ]; then \
 		echo "QGroundControl already at $(QGC_APP)"; \
 	else \
 		wget -O $(QGC_APP) $(QGC_URL); \
 	fi
 	chmod +x $(QGC_APP)
+
+qgc-run: ## Start QGroundControl (connects to the running sim by itself)
+	@if [ ! -x $(QGC_APP) ]; then echo "No QGroundControl at $(QGC_APP): run make qgc"; exit 1; fi
+	$(QGC_APP)
+
+qgc-radio: ## Set up a USB RC radio (EdgeTX/OpenTX, e.g. Radiomaster) as QGroundControl's joystick (QGC closed)
+	python3 sim/qgc_radio.py
 
 check: ## Report what is installed and what is missing (no sudo)
 	@missing=0; \
@@ -185,14 +207,20 @@ test: ## Run the tests: config consistency, ZED USB publisher, scripts + Makefil
 	@if [ -f $(ROS_SETUP) ]; then source $(ROS_SETUP); fi; \
 	PYTHONNOUSERSITE=1 python3 -m pytest tests $(PYTEST_ARGS)
 
-sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1)
-	./sim/launch_sim.sh $(PX4_DIR)
+sim: ## Run PX4 + Gazebo in the warehouse world (terminal 1), e.g. make sim NO_GCS=true
+	NO_GCS=$(NO_GCS) ./sim/launch_sim.sh $(PX4_DIR)
+
+reset-drone: ## Put the drone back upright at its start point without restarting the sim (e.g. after a crash)
+	./sim/reset_drone.sh $(PX4_DIR)
+
+camera: ## Gamepad camera: orbit Gazebo's follow view (D-pad, LT/RT, Y), first person on X
+	PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py
 
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh
 
-rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false
-	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP)
+rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1 VIZ=false RAY_TRACING=true
+	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE) rtabmap_viz:=$(VIZ) ray_tracing:=$(RAY_TRACING)
 
 mavros: ## Run MAVROS for the simulated PX4, on sim time (terminal 4); the flight recorder needs it
 	source $(ROS_SETUP) && if [ -n "$$ROS_OVERLAY" ]; then source "$$ROS_OVERLAY"; fi && \
@@ -200,6 +228,19 @@ mavros: ## Run MAVROS for the simulated PX4, on sim time (terminal 4); the fligh
 
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
+
+# Ray tracing marks the space the camera saw through as free; without it only the floor is free.
+save-octomap: ## 3D OctoMap for other groups (<OUT>_octomap.bt, default ~/maps/map) from the last RTAB-Map run, once stopped
+	@if pgrep -x rtabmap >/dev/null; then \
+		echo "Stop RTAB-Map first (Ctrl+C in make rtabmap): it writes the rest of the map to $(DB) when it stops"; exit 1; fi
+	@if [ -e $(OUT)_octomap.bt ]; then \
+		echo "$(OUT)_octomap.bt exists: pick another OUT=..., or delete it to replace it"; exit 1; fi
+	mkdir -p $(dir $(OUT))
+	source $(ROS_SETUP) && rtabmap-export --octomap --Grid/RayTracing true --output_dir $(dir $(OUT)) --output $(notdir $(OUT)) $(DB)
+
+# OUT is the name save-octomap was given (…/warehouse -> warehouse_octomap.bt) or the .bt file itself.
+view-octomap: ## Show an OctoMap .bt in RViz (default ~/maps/map_octomap.bt), e.g. make view-octomap OUT=~/maps/warehouse
+	./tools/view_octomap.sh $(if $(filter %.bt,$(OUT)),$(OUT),$(OUT)_octomap.bt)
 
 load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/maps/warehouse.yaml
 	source $(ROS_SETUP) && python3 tools/load_map.py --ros-args -p map:=$(MAP)
@@ -209,6 +250,9 @@ replay-flight: ## Replay a recorded flight through RTAB-Map, e.g. make replay-fl
 
 map-monitor: ## Log map growth to ~/.ros/map_growth.csv while RTAB-Map runs (sim time)
 	source $(ROS_SETUP) && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true
+
+coverage: ## Live top-down view of how much of the warehouse RTAB-Map has mapped, and where is left (sim)
+	source $(ROS_SETUP) && python3 tools/coverage_monitor.py --ros-args -p use_sim_time:=true
 
 zed-usb: ## Run RTAB-Map on a ZED plugged into this laptop (no NVIDIA GPU), e.g. make zed-usb FLIP=true
 	./zed_usb/run.sh flip:=$(FLIP)
