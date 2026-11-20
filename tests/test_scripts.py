@@ -727,7 +727,9 @@ def test_octomap_rviz_shows_the_topics_the_viewer_publishes_in_its_frame():
 
 # The stub logs each call and keeps `ros2 launch` running for a moment, as RTAB-Map would, so the player
 # (started in the background) gets to run before the script ends.
-REPLAY_STUB = 'echo "$*" >> "$(dirname "$0")/../log/ros2.txt"\nif [ "$1" = launch ]; then sleep 1; fi\n'
+REPLAY_STUB = ('echo "$*" >> "$(dirname "$0")/../log/ros2.txt"\n'
+               'if [ "$1" = bag ]; then echo "$FASTRTPS_DEFAULT_PROFILES_FILE" > "$(dirname "$0")/../log/profile.txt"; fi\n'
+               'if [ "$1" = launch ]; then sleep 1; fi\n')
 
 
 def recorded_flight(tmp_path, topic):
@@ -765,6 +767,8 @@ def test_replay_flight_uses_the_launch_file_and_topics_of_the_recording(stubs, t
     assert play.startswith(f'bag play {folder}/bag --topics ')
     assert topic in play
     assert play.endswith(' '.join(clock + ['--rate', '2', '--disable-keyboard-controls']))
+    # The player sends the images: without the shared-memory profile they crawl over UDP.
+    assert (stubs.log / 'profile.txt').read_text().strip() == str(REPO / 'sim/fastdds.xml')
 
 
 @needs_ros_setup

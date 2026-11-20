@@ -22,6 +22,10 @@ fi
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 source /opt/ros/humble/setup.bash
 if [ -n "${ROS_OVERLAY:-}" ]; then source "$ROS_OVERLAY"; fi
+# Shared memory for the replayed images, as the live sim uses (sim/fastdds.xml): with ROS_LOCALHOST_ONLY=1
+# they would otherwise go over UDP and reach RTAB-Map at a few Hz. Both ends need it; the launchers set it
+# for RTAB-Map. A profile you set yourself is kept.
+export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTRTPS_DEFAULT_PROFILES_FILE:-$HERE/sim/fastdds.xml}"
 
 if grep -q '/uav/rgb/image' "$BAG/metadata.yaml"; then
   # Simulated flight: the recorded /clock drives sim time. The recorder stays off, or the replay would
