@@ -117,3 +117,51 @@ def load(yaml_path):
     with open(image, 'rb') as f:
         width, height, data = from_pgm(f.read())
     return width, height, data, resolution, origin
+
+
+# Inside of the sim warehouse's walls (sim/models/depot at 0.6 scale), in RTAB-Map's map frame, which is
+# Gazebo's world frame (the drone starts at the origin): x_min, x_max, y_min, y_max in meters.
+WAREHOUSE = (-15.3, 15.3, -7.9, 7.7)
+
+
+def block_coverage(data, width, resolution, origin, bounds=WAREHOUSE, block=1.0):
+    """How much of an area an OccupancyGrid has seen. Returns (blocks, known_m2, area_m2): blocks[row][col]
+    is the known fraction (0-1) of each block x block m square, row 0 at the top (largest y), column 0 at
+    the left (smallest x); known_m2 is the known area inside `bounds`. `origin` is the grid's (x, y)."""
+    x0, x1, y0, y1 = bounds
+    cols, rows = math.ceil((x1 - x0) / block - 1e-9), math.ceil((y1 - y0) / block - 1e-9)
+    counts = [[0] * cols for _ in range(rows)]
+    known = 0
+    for i, v in enumerate(data):
+        if v < 0:
+            continue
+        x = origin[0] + (i % width + 0.5) * resolution
+        y = origin[1] + (i // width + 0.5) * resolution
+        if x0 <= x < x1 and y0 <= y < y1:
+            known += 1
+            counts[rows - 1 - int((y - y0) // block)][int((x - x0) // block)] += 1
+    def span(lo, hi, k):  # length of the k-th block of [lo, hi); the last one may be cut short
+        return min(hi, lo + (k + 1) * block) - (lo + k * block)
+
+    cell = resolution ** 2
+    blocks = [[min(1.0, counts[r][c] * cell / (span(x0, x1, c) * span(y0, y1, rows - 1 - r)))
+               for c in range(cols)] for r in range(rows)]
+    return blocks, known * cell, (x1 - x0) * (y1 - y0)
+
+
+# Block shades, two characters wide so a block looks square in a terminal: seen < 10%, < 50%, < 90%, more.
+SHADES = ('  ', '░░', '▒▒', '██')
+
+
+def draw_coverage(blocks, bounds=WAREHOUSE, block=1.0, drone=None):
+    """Top-down text picture of block_coverage's blocks, framed, with '@@' on the block holding `drone` (x, y)."""
+    x0, _, _, y1 = bounds
+    at = None
+    if drone is not None:
+        at = (int((y1 - drone[1]) // block), int((drone[0] - x0) // block))
+    lines = ['+' + '--' * len(blocks[0]) + '+']
+    for r, row in enumerate(blocks):
+        cells = ['@@' if (r, c) == at else SHADES[(f >= .1) + (f >= .5) + (f >= .9)] for c, f in enumerate(row)]
+        lines.append('|' + ''.join(cells) + '|')
+    lines.append(lines[0])
+    return '\n'.join(lines)

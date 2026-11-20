@@ -50,7 +50,9 @@
           </clip>
         </camera>
         <always_on>1</always_on>
-        <update_rate>30</update_rate>
+        <!-- 15 Hz, as the ZED feeds RTAB-Map on the drone. At 30 Gazebo's single sensor-render thread
+             (depth point cloud + image copies) can't keep up: ~10 frames per sim second, RTF ~0.6. -->
+        <update_rate>15</update_rate>
         <visualize>true</visualize>
       </sensor>
       <sensor name="StereoOV7251" type="depth_camera">
@@ -69,7 +71,7 @@
           </clip>
         </camera>
         <always_on>1</always_on>
-        <update_rate>30</update_rate>
+        <update_rate>15</update_rate>
         <visualize>true</visualize>
         <topic>depth_camera</topic>
       </sensor>
