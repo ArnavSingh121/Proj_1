@@ -40,6 +40,10 @@ def rtabmap_and_odometry(context):
         rtabmap_args = '--delete_db_on_start ' + rtabmap_args
     if lidar:
         rtabmap_args += ' --Grid/Sensor 2'  # occupancy grid from both lidar and depth camera
+    if arg('ray_tracing') == 'true':
+        # Free space along each depth ray, not only on the floor: the 3D map then tells free from unknown
+        # as other groups need it, and RTAB-Map's own OctoMap can be saved as is (make save-octomap).
+        rtabmap_args += ' --Grid/RayTracing true'
 
     launch_arguments = {
         'rtabmap_args': rtabmap_args,
@@ -105,6 +109,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'database_path', default_value='~/.ros/rtabmap.db', description='RTAB-Map map database'),
         DeclareLaunchArgument('rtabmap_viz', default_value='true', description='RTAB-Map viewer'),
+        DeclareLaunchArgument(
+            'ray_tracing', default_value='false',
+            description="'true' marks free space along each depth ray while mapping (Grid/RayTracing)"),
     ]
 
     # base_link -> camera_optical_frame (z forward, x right, y down), the frame the bridged images carry.

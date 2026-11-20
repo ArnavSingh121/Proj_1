@@ -547,9 +547,10 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['bridge'], './sim/bridge.sh'),
     (['reset-drone', 'PX4_DIR=/px4'], './sim/reset_drone.sh /px4'),
     (['camera'], 'PYTHONNOUSERSITE=1 python3 sim/camera_orbit.py'),
-    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=2 rtabmap_viz:=true'),
-    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1', 'VIZ=false'],
-     './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1 rtabmap_viz:=false'),
+    (['rtabmap'], './sim/rtabmap.sh odometry:=visual lidar:=false new_map:=true detection_rate:=2 rtabmap_viz:=true ray_tracing:=false'),
+    (['rtabmap', 'ODOMETRY=sim', 'LIDAR=true', 'NEW_MAP=false', 'RATE=1', 'VIZ=false', 'RAY_TRACING=true'],
+     './sim/rtabmap.sh odometry:=sim lidar:=true new_map:=false detection_rate:=1 rtabmap_viz:=false '
+     'ray_tracing:=true'),
     (['save-map', 'OUT=/maps/w'],
      'source /opt/ros/humble/setup.bash && python3 tools/save_map.py --ros-args -p out:=/maps/w'),
     (['load-map', 'MAP=/maps/w.yaml'],

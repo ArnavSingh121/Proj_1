@@ -109,6 +109,7 @@ Options (all can be combined):
 | `make rtabmap NEW_MAP=false` | Reload the map in `~/.ros/rtabmap.db` and keep mapping, instead of starting over |
 | `make rtabmap RATE=1` | Map updates per second (default `2`; odometry always runs at the camera rate). `1` is lighter on the CPU, e.g. on battery. `0` adds every camera frame: about 3.6 GB of database in 20 minutes, and the viewer stalls |
 | `make rtabmap VIZ=false` | No RTAB-Map viewer window. The viewer keeps every point cloud in memory (about 5 GB after 25 minutes) and can run a 16 GB machine out of memory on a long flight; the map is built the same. Watch progress with `make coverage` or RViz instead |
+| `make rtabmap RAY_TRACING=true` | Mark free space along each depth ray while mapping (`Grid/RayTracing`), so the live 3D map (`/rtabmap/octomap_full`) tells free from unknown, as other groups' planners need. `make save-octomap` already does this when exporting; this makes the live map match |
 
 Whatever the mode, [`sim/odom_relay.py`](sim/odom_relay.py) checks the simulated odometry: samples with
 NaN values, a non-unit quaternion, time going backwards or an impossible jump are dropped (with a

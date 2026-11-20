@@ -34,6 +34,9 @@ RATE     ?= 2
 # `make rtabmap`: false runs without the RTAB-Map viewer, which keeps every cloud in memory (~5 GB after
 # 25 min) and can run the machine out of memory; mapping is the same
 VIZ      ?= true
+# `make rtabmap`: true marks free space along each depth ray while mapping, so the live 3D map
+# (/rtabmap/octomap_full) tells free from unknown, as `make save-octomap` already does on export
+RAY_TRACING ?= false
 # `make save-map` / `make load-map`: occupancy map files (<OUT>.pgm + <OUT>.yaml);
 # `make save-octomap`: <OUT>_octomap.bt from RTAB-Map's database DB
 OUT ?= $(HOME)/maps/map
@@ -212,8 +215,8 @@ camera: ## Gamepad camera: orbit Gazebo's follow view (D-pad, LT/RT, Y), first p
 bridge: ## Run the Gazebo -> ROS 2 bridge (terminal 2)
 	./sim/bridge.sh
 
-rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1 VIZ=false
-	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE) rtabmap_viz:=$(VIZ)
+rtabmap: ## Run RTAB-Map on the bridged topics (terminal 3), e.g. make rtabmap ODOMETRY=sim LIDAR=true NEW_MAP=false RATE=1 VIZ=false RAY_TRACING=true
+	./sim/rtabmap.sh odometry:=$(ODOMETRY) lidar:=$(LIDAR) new_map:=$(NEW_MAP) detection_rate:=$(RATE) rtabmap_viz:=$(VIZ) ray_tracing:=$(RAY_TRACING)
 
 save-map: ## Save the current 2D occupancy map (.pgm + .yaml, default ~/maps/map), e.g. make save-map OUT=~/maps/warehouse
 	source $(ROS_SETUP) && python3 tools/save_map.py --ros-args -p out:=$(OUT)
