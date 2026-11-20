@@ -272,6 +272,9 @@ alone. To turn recording off: `./sim/rtabmap.sh flight_recorder:=false`. A simul
 about 40 MB/s (2 GB a minute). With less than 3 GB free, the recording stops by itself; the map is
 still saved at landing.
 
+`make reset-drone` disarms the drone, so the recorder treats it as a landing: that flight and its map are
+saved, and the next takeoff starts a new folder and a new map.
+
 On the Jetson, `make jetson-autostart ZED_MODEL=zed2i` starts everything at power-on.
 
 ### Worlds
