@@ -4,10 +4,16 @@ import glob
 import json
 import os
 import re
+import shutil
 
 MIN_POSES = 3  # fewer map poses: armed on the bench without really moving; never replaces `latest`
 # RTAB-Map's visual odometry (rgbd_odometry, namespace rtabmap) resets here. Absent with the ZED's own odometry.
 ODOM_RESET = '/rtabmap/rgbd_odometry/reset_odom'
+
+
+def disk_low(path, min_free_gb):
+    """True when the disk holding `path` has less than `min_free_gb` GB free."""
+    return shutil.disk_usage(path).free < min_free_gb * 1e9
 
 
 class ArmWatcher:

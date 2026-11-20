@@ -49,11 +49,15 @@ class FlightRecorder(Node):
         self.declare_parameter('database', '~/.ros/rtabmap.db')
         self.declare_parameter('topics', '')  # space-separated; empty records no bag, only the map
         self.declare_parameter('autosave', 30.0)  # s; the topic is free to read, so RTAB-Map doesn't pause
+        # Raw camera topics fill ~2 GB a minute in the sim. Below this the bag stops (checked every `autosave` s);
+        # the map is still saved at landing.
+        self.declare_parameter('min_free_gb', 3.0)
         p = lambda n: self.get_parameter(n).value
         self.root = os.path.expanduser(p('recordings_dir'))
         self.db = os.path.expanduser(p('database'))
         self.topics = p('topics').split()
         self.autosave_every = p('autosave')
+        self.min_free_gb = p('min_free_gb')
         self.watcher = flight_tools.ArmWatcher()
         self.events = queue.Queue()
         self.grid = None
@@ -93,6 +97,7 @@ class FlightRecorder(Node):
             elif self.folder:
                 self.write_grid()
                 self.check_bag()
+                self.check_disk()
 
     def call(self, client):
         if not client.wait_for_service(timeout_sec=2.0):
@@ -120,6 +125,9 @@ class FlightRecorder(Node):
         self.bag, self.bag_checked = None, False
         if not self.topics:
             return
+        if flight_tools.disk_low(self.folder, self.min_free_gb):
+            self.get_logger().error(f'NOT RECORDING: less than {self.min_free_gb:g} GB free; the map is still saved')
+            return
         # stdin from /dev/null: the recorder's keyboard handler stops a process that shares a terminal.
         with open(os.path.join(self.folder, 'record.log'), 'w') as log:
             self.bag = subprocess.Popen(
@@ -134,6 +142,13 @@ class FlightRecorder(Node):
         self.bag_checked = True
         if self.bag.poll() is not None or not flight_tools.bag_files(os.path.join(self.folder, 'bag')):
             self.get_logger().error(f'NOT RECORDING: see {os.path.join(self.folder, "record.log")}')
+
+    def check_disk(self):
+        """Stops the bag before it fills the disk, which would also stop RTAB-Map saving the map."""
+        if self.bag is not None and flight_tools.disk_low(self.folder, self.min_free_gb):
+            self.get_logger().error(f'Recording stopped: less than {self.min_free_gb:g} GB free. '
+                                    'The map is still saved at landing')
+            self.stop_bag(timeout=60)
 
     def stop_bag(self, timeout):
         if self.bag is None:

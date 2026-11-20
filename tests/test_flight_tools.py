@@ -111,3 +111,10 @@ def test_odometry_reset_service_is_the_one_rtabmap_offers():
     # calling it left the odometry from before takeoff in place. make reset-drone calls the same service.
     assert flight_tools.ODOM_RESET == '/rtabmap/rgbd_odometry/reset_odom'
     assert flight_tools.ODOM_RESET in (REPO / 'sim/reset_drone.sh').read_text()
+
+
+@pytest.mark.parametrize('free_gb, low', [(2.9, True), (3.1, False)])
+def test_disk_low_compares_free_space_with_the_limit(monkeypatch, tmp_path, free_gb, low):
+    usage = flight_tools.shutil.disk_usage(tmp_path)
+    monkeypatch.setattr(flight_tools.shutil, 'disk_usage', lambda path: usage._replace(free=int(free_gb * 1e9)))
+    assert flight_tools.disk_low(tmp_path, 3.0) is low

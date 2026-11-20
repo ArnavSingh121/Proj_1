@@ -269,7 +269,8 @@ make replay-flight FLIGHT=2026-11-10_14-03-22 SPEED=2   # or a given one, faster
 Replaying needs no sim, drone or camera and maps into `<flight>/replay.db`, never changing the recorded
 map. It replays drone flights on a laptop too. Arming without moving keeps its folder but leaves `latest`
 alone. To turn recording off: `./sim/rtabmap.sh flight_recorder:=false`. A simulated camera records
-about 40 MB/s, so keep an eye on disk space.
+about 40 MB/s (2 GB a minute). With less than 3 GB free, the recording stops by itself; the map is
+still saved at landing.
 
 On the Jetson, `make jetson-autostart ZED_MODEL=zed2i` starts everything at power-on.
 
