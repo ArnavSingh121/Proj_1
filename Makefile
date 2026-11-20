@@ -227,8 +227,9 @@ save-octomap: ## 3D OctoMap for other groups (<OUT>_octomap.bt, default ~/maps/m
 	mkdir -p $(dir $(OUT))
 	source $(ROS_SETUP) && rtabmap-export --octomap --Grid/RayTracing true --output_dir $(dir $(OUT)) --output $(notdir $(OUT)) $(DB)
 
+# OUT is the name save-octomap was given (…/warehouse -> warehouse_octomap.bt) or the .bt file itself.
 view-octomap: ## Show an OctoMap .bt in RViz (default ~/maps/map_octomap.bt), e.g. make view-octomap OUT=~/maps/warehouse
-	./tools/view_octomap.sh $(OUT)_octomap.bt
+	./tools/view_octomap.sh $(if $(filter %.bt,$(OUT)),$(OUT),$(OUT)_octomap.bt)
 
 load-map: ## Publish a saved occupancy map on /map, e.g. make load-map MAP=~/maps/warehouse.yaml
 	source $(ROS_SETUP) && python3 tools/load_map.py --ros-args -p map:=$(MAP)

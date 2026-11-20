@@ -138,7 +138,7 @@ start pose, z up, meters), readable as a plain `OcTree` by octovis, `octomap_ser
 library (its header says `ColorOcTree`, but `.bt` files hold occupancy only). The `_octomap.ply` next to
 it shows the same cells as a point cloud for MeshLab or CloudCompare.
 
-To look at a `.bt`, `make view-octomap OUT=~/maps/warehouse` ([`tools/view_octomap.sh`](tools/view_octomap.sh),
+To look at a `.bt`, `make view-octomap OUT=~/maps/warehouse` (or `OUT=` the `.bt` file itself) ([`tools/view_octomap.sh`](tools/view_octomap.sh),
 or `./tools/view_octomap.sh file.bt`) opens it in RViz: the occupied cells colored by height (purple at
 the floor to red at the top), a 1 m grid and the start pose. Tick **Free cells** to see the free space too.
 Closing RViz stops it. For the full map in color, with the camera images and the drone's path, open the
@@ -299,6 +299,8 @@ make zed-usb              # camera upright
 make zed-usb FLIP=true    # camera upside down (images turned, left/right swapped)
 ```
 
+- Like the sim, it uses [`sim/fastdds.xml`](sim/fastdds.xml) (shared memory): over UDP the images reach
+  RTAB-Map late and in bursts once the CPU is busy, odometry loses track and the map splits into pieces.
 - Depth is classic stereo matching, not the SDK's neural depth: expect holes on plain walls/ceilings.
 - VGA (672x376) at 15 fps: what the CPU depth keeps up with. No IMU (that needs the SDK).
 - If the camera keeps disconnecting every few seconds while idle, USB autosuspend is the cause

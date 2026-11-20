@@ -347,11 +347,11 @@ def test_launcher_runs_its_launch_file_by_absolute_path(stubs, tmp_path, script,
 
 
 @needs_ros_setup
-@pytest.mark.parametrize('script', ['sim/bridge.sh', 'sim/rtabmap.sh'])
+@pytest.mark.parametrize('script', ['sim/bridge.sh', 'sim/rtabmap.sh', 'zed_usb/run.sh'])
 @pytest.mark.parametrize('own_profile', [None, '/my/profile.xml'])
-def test_sim_scripts_use_the_shared_memory_dds_profile(stubs, tmp_path, script, own_profile):
-    """Both ends of the camera images (bridge and RTAB-Map) need the profile, or the images go over UDP
-    and reach RTAB-Map at a few Hz. A profile the user set is kept."""
+def test_camera_scripts_use_the_shared_memory_dds_profile(stubs, tmp_path, script, own_profile):
+    """Both ends of the camera images (bridge or ZED publisher, and RTAB-Map) need the profile, or the
+    images go over UDP and reach RTAB-Map late and at a few Hz. A profile the user set is kept."""
     stubs.add('ros2')
     env = stubs.env(ROS_OVERLAY=stubs.overlay, XDG_RUNTIME_DIR=tmp_path)
     env.pop('FASTRTPS_DEFAULT_PROFILES_FILE', None)
@@ -557,6 +557,7 @@ def test_not_jetson_guard(stubs, machine, ok):
     (['load-map', 'OUT=/maps/w'],  # MAP defaults to the map save-map wrote
      'source /opt/ros/humble/setup.bash && python3 tools/load_map.py --ros-args -p map:=/maps/w.yaml'),
     (['view-octomap', 'OUT=/maps/w'], './tools/view_octomap.sh /maps/w_octomap.bt'),
+    (['view-octomap', 'OUT=/maps/w_octomap.bt'], './tools/view_octomap.sh /maps/w_octomap.bt'),  # the file itself
     (['map-monitor'],
      'source /opt/ros/humble/setup.bash && python3 tools/map_monitor.py --ros-args -p use_sim_time:=true'),
     (['coverage'],
