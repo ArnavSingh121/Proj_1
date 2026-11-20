@@ -6,6 +6,7 @@ import os
 import pytest
 
 import flight_tools
+from conftest import REPO
 from flight_tools import ArmWatcher
 
 NOW = datetime.datetime(2026, 11, 5, 17, 5, 12)
@@ -103,3 +104,10 @@ def test_a_recording_that_never_closed_has_no_summary_but_its_files_are_found(tm
     (tmp_path / 'bag_0.db3').write_bytes(b'x')
     assert flight_tools.bag_summary(str(tmp_path)) is None
     assert flight_tools.bag_files(str(tmp_path)) == [str(tmp_path / 'bag_0.db3')]
+
+
+def test_odometry_reset_service_is_the_one_rtabmap_offers():
+    # rtabmap_launch runs visual odometry as /rtabmap/rgbd_odometry: /rtabmap/reset_odom does not exist, and
+    # calling it left the odometry from before takeoff in place. make reset-drone calls the same service.
+    assert flight_tools.ODOM_RESET == '/rtabmap/rgbd_odometry/reset_odom'
+    assert flight_tools.ODOM_RESET in (REPO / 'sim/reset_drone.sh').read_text()

@@ -62,7 +62,7 @@ class FlightRecorder(Node):
         self.bag = None
         self.bag_checked = False
         self.reset_map = self.create_client(Empty, '/rtabmap/rtabmap/reset')
-        self.reset_odom = self.create_client(Empty, '/rtabmap/reset_odom')  # absent with the ZED's odometry
+        self.reset_odom = self.create_client(Empty, flight_tools.ODOM_RESET)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
         self.create_subscription(OccupancyGrid, '/rtabmap/map', self.on_map, latched)
