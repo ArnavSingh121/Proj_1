@@ -7,6 +7,7 @@
 #
 # Run as node 'zed_node' in namespace 'zed' (zed_usb_rtabmap.launch.py does this). If a NumPy 2 in
 # ~/.local breaks the system OpenCV, run with PYTHONNOUSERSITE=1.
+import array as pyarray
 import configparser
 import glob
 import os
@@ -291,7 +292,8 @@ class ZedUsb(Node):
         m.height, m.width = array.shape[:2]
         m.encoding = encoding
         m.step = array.strides[0]
-        m.data = array.tobytes()
+        # As array('B'): rclpy checks plain bytes one byte at a time in Python, ~100 ms per frame pair.
+        m.data = pyarray.array('B', array.tobytes())
         return m
 
     def depth(self, left, right):

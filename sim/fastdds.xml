@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<!-- Fast DDS profile for the sim scripts (bridge.sh, rtabmap.sh export it).
+<!-- Fast DDS profile for the sim scripts (bridge.sh, rtabmap.sh export it) and zed_usb/run.sh.
      On Humble, ROS_LOCALHOST_ONLY=1 leaves Fast DDS with UDP over loopback only, and 1 MB camera images
      then reach RTAB-Map at 1-5 Hz instead of 15 (odometry 2 Hz). Shared memory (16 MB segments, room for
      several images) carries them at full rate; UDP stays on 127.0.0.1 for everything else. -->
